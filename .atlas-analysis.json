@@ -1,0 +1,95 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "Distributed Notification System",
+  "projectDescription": "A microservices-based notification system that sends emails and push notifications using RabbitMQ for asynchronous communication.",
+  "theme": "aspen",
+  "primaryColor": "#6366f1",
+  "lightColor": "#818cf8",
+  "darkColor": "#4f46e5",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "architecture",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Services",
+            "pages": [
+              "services/api-gateway",
+              "services/user-service",
+              "services/template-service",
+              "services/email-service",
+              "services/push-service"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/docker-setup",
+              "deployment/configuration",
+              "deployment/environment-variables"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/monitoring",
+              "operations/health-checks",
+              "operations/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "API Gateway",
+            "pages": [
+              "api/gateway/create-notification",
+              "api/gateway/health"
+            ]
+          },
+          {
+            "group": "User Service",
+            "pages": [
+              "api/user/get-user",
+              "api/user/create-user"
+            ]
+          },
+          {
+            "group": "Template Service",
+            "pages": [
+              "api/template/get-template"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Asynchronous notification processing with RabbitMQ",
+    "Multi-service architecture with API Gateway, User, Template, Email, and Push services",
+    "Redis caching for user preferences and rate limiting",
+    "Docker Compose orchestration for local development",
+    "Health checks and monitoring across all services",
+    "Idempotency with request IDs to prevent duplicate notifications",
+    "Circuit breaker pattern for external service resilience",
+    "CI/CD pipelines for automated builds and deployments"
+  ],
+  "publicApiSurface": [
+    "POST /api/v1/notifications/ - Create and queue a notification",
+    "POST /api/v1/{notification_type}/status/ - Update notification status",
+    "GET /api/v1/users/{user_id} - Retrieve user information and preferences",
+    "POST /api/v1/users/ - Create a new user",
+    "GET /api/v1/templates/{template_code} - Retrieve notification template",
+    "GET /health - Health check endpoint (all services)"
+  ]
+}
