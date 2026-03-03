@@ -72,8 +72,12 @@
           {
             "group": "User Service",
             "pages": [
+              "api/user/create-user",
               "api/user/get-user",
-              "api/user/create-user"
+              "api/user/list-users",
+              "api/user/update-user",
+              "api/user/update-preferences",
+              "api/user/delete-user"
             ]
           },
           {

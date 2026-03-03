@@ -13,7 +13,7 @@ This guide covers common issues you may encounter when running the distributed n
   <Accordion title="Service won't start - Port already in use">
     **Symptom:**
     
-    ```
+    ```text
     Error: listen EADDRINUSE: address already in use :::8000
     ```
     
@@ -97,7 +97,7 @@ This guide covers common issues you may encounter when running the distributed n
   <Accordion title="RabbitMQ connection refused">
     **Symptom:**
     
-    ```
+    ```text
     Error: connect ECONNREFUSED 127.0.0.1:5672
     [error] Failed to connect to RabbitMQ
     ```
@@ -185,7 +185,7 @@ This guide covers common issues you may encounter when running the distributed n
   <Accordion title="Database connection failed">
     **Symptom:**
     
-    ```
+    ```text
     Error: connect ECONNREFUSED 127.0.0.1:5432
     [error] Unable to connect to the database
     ```
@@ -235,7 +235,7 @@ This guide covers common issues you may encounter when running the distributed n
   <Accordion title="Redis connection timeout">
     **Symptom:**
     
-    ```
+    ```text
     [error] Redis connection timeout
     Error: connect ETIMEDOUT
     ```
@@ -507,7 +507,7 @@ docker-compose logs -f | grep $CORRELATION_ID
 
 ### Example Correlation Trace
 
-```
+```text
 [12:34:56 INF] abc123 - API Gateway received notification request
 [12:34:56 INF] abc123 - Fetching user uuid-456 from User Service
 [12:34:57 INF] abc123 - User Service returned user data
@@ -526,7 +526,7 @@ Messages that fail after all retry attempts are moved to the `failed.queue` for 
 
 1. **Open RabbitMQ Management UI:**
 
-```
+```text
 http://localhost:15673
 ```
 

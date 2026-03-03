@@ -1,0 +1,143 @@
+---
+title: Delete user
+description: Remove a user from the system
+---
+
+## Endpoint
+
+```http
+DELETE /api/v1/users/{id}
+```
+
+Permanently deletes a user from the notification system. This action cannot be undone.
+
+<Warning>
+This is a destructive operation. The user record and all associated data will be permanently removed from the database.
+</Warning>
+
+## Path parameters
+
+<ParamField path="id" type="string" required>
+  The unique identifier (UUID) of the user to delete
+</ParamField>
+
+## Response
+
+Returns HTTP 204 No Content on successful deletion with no response body.
+
+## Example request
+
+```bash cURL
+curl -X DELETE http://localhost:8001/api/v1/users/123e4567-e89b-12d3-a456-426614174000
+```
+
+```javascript JavaScript
+const userId = '123e4567-e89b-12d3-a456-426614174000';
+
+const response = await fetch(
+  `http://localhost:8001/api/v1/users/${userId}`,
+  {
+    method: 'DELETE'
+  }
+);
+
+// Response status: 204 No Content
+console.log(response.status); // 204
+```
+
+```python Python
+import requests
+
+user_id = '123e4567-e89b-12d3-a456-426614174000'
+
+response = requests.delete(
+    f'http://localhost:8001/api/v1/users/{user_id}'
+)
+
+# Response status: 204 No Content
+print(response.status_code)  # 204
+```
+
+## Error responses
+
+<ResponseField name="404 Not Found" type="error">
+  User with the specified ID does not exist
+  
+  ```json
+  {
+    "statusCode": 404,
+    "message": "User not found"
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="400 Bad Request" type="error">
+  Invalid user ID format (not a valid UUID)
+  
+  ```json
+  {
+    "statusCode": 400,
+    "message": "Validation failed",
+    "errors": ["id must be a valid UUID"]
+  }
+  ```
+</ResponseField>
+
+## Use cases
+
+- User account deletion (GDPR "right to be forgotten")
+- Administrative cleanup of test accounts
+- Account deactivation workflow
+- User-initiated account removal
+
+## Considerations
+
+### Data implications
+
+When a user is deleted:
+- User record is removed from PostgreSQL database
+- Associated preferences are deleted
+- Push tokens are removed
+
+### Pending notifications
+
+<Note>
+Deleting a user does not affect notifications already queued in RabbitMQ. If a notification for this user is being processed, the worker services will fail to find the user and log an error. The notification will be moved to the failed queue.
+</Note>
+
+### Best practices
+
+1. **Warn users before deletion** - Implement a confirmation dialog in your application
+2. **Consider soft delete** - Instead of permanent deletion, add a `deleted_at` timestamp and filter deleted users from queries
+3. **Archive data** - Export user data before deletion for compliance or backup purposes
+4. **Cascade cleanup** - Ensure related records in other systems are also cleaned up
+
+## Alternative: Soft delete pattern
+
+For production systems, consider implementing soft delete instead of hard delete:
+
+```typescript
+// Add to User entity
+@Column({ type: 'timestamp', nullable: true })
+deleted_at?: Date;
+
+// Modify delete method
+async softDelete(id: string): Promise<void> {
+  await this.userRepository.update(id, { 
+    deleted_at: new Date() 
+  });
+}
+
+// Filter deleted users in queries
+async findAll(): Promise<User[]> {
+  return this.userRepository.find({
+    where: { deleted_at: null }
+  });
+}
+```
+
+This approach allows you to:
+- Recover accidentally deleted accounts
+- Maintain referential integrity
+- Comply with data retention policies
+- Audit deletion history

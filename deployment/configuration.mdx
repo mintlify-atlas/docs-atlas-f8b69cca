@@ -56,12 +56,12 @@ push.created -> push.queue
 ### Connection URLs
 
 **Internal (Docker network):**
-```
+```text
 amqp://rabbitmq:5672
 ```
 
 **External (host machine):**
-```
+```text
 amqp://localhost:5673
 ```
 
@@ -69,7 +69,7 @@ amqp://localhost:5673
 
 Access the RabbitMQ management interface:
 
-```
+```text
 http://localhost:15673
 Username: guest
 Password: guest
@@ -118,13 +118,13 @@ redis:
 ### Connection Details
 
 **Internal (Docker network):**
-```
+```text
 Host: redis
 Port: 6379
 ```
 
 **External (host machine):**
-```
+```text
 Host: localhost
 Port: 6379
 ```
@@ -184,7 +184,7 @@ The system creates a single database (`notification_db`) with separate schemas f
 ### Connection Details
 
 **Internal (Docker network):**
-```
+```text
 Host: postgres
 Port: 5432
 Database: notification_db
@@ -193,7 +193,7 @@ Password: your_password_here
 ```
 
 **External (host machine):**
-```
+```text
 Host: localhost
 Port: 5432
 Database: notification_db
