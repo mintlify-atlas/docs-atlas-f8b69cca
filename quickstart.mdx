@@ -1,80 +1,447 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick start
+description: Get the distributed notification system running locally in minutes using Docker Compose
 ---
 
-## Get started in three steps
+## Prerequisites
 
-Get your documentation site running locally and make your first customization.
+Before you begin, ensure you have the following installed on your machine:
 
-### Step 1: Set up your local environment
+<CardGroup cols={2}>
+  <Card title="Docker" icon="docker">
+    Version 20.10 or higher
+  </Card>
+  <Card title="Docker Compose" icon="layer-group">
+    Version 2.0 or higher
+  </Card>
+</CardGroup>
+
+Verify your installation:
+
+```bash
+docker --version
+docker compose version
+```
+
+<Note>
+Docker Desktop includes Docker Compose. On Linux, you may need to install Docker Compose separately.
+</Note>
+
+## Installation
+
+<Steps>
+  <Step title="Clone the repository">
+    Clone the notification system repository to your local machine:
+    
+    ```bash
+    git clone <repository-url>
+    cd distributed-notification-system
+    ```
+  </Step>
+
+  <Step title="Configure environment variables">
+    Each service has an `.env.example` file. Copy these to create your local configuration:
+    
+    ```bash
+    # API Gateway
+    cp api-gateway/.env.example api-gateway/.env
+    
+    # User Service
+    cp user-service/.env.example user-service/.env
+    
+    # Email Service
+    cp email-service/EmailService/.env.example email-service/EmailService/.env
+    
+    # Push Service
+    cp push-service/.env.example push-service/.env
+    ```
+    
+    <Warning>
+    For production deployments, update the default credentials in these files. Never commit `.env` files to version control.
+    </Warning>
+  </Step>
+
+  <Step title="Start all services">
+    Use Docker Compose to build and start all services:
+    
+    ```bash
+    docker compose up --build
+    ```
+    
+    This command will:
+    - Build Docker images for all 5 microservices
+    - Start RabbitMQ, Redis, and PostgreSQL
+    - Start MailHog for email testing
+    - Set up the Docker network and dependencies
+    
+    <Note>
+    The first build may take 5-10 minutes depending on your internet connection and machine specifications.
+    </Note>
+  </Step>
+
+  <Step title="Verify services are running">
+    Check that all containers are healthy:
+    
+    ```bash
+    docker compose ps
+    ```
+    
+    You should see all services in the `Up` state:
+    
+    ```
+    NAME                STATUS
+    api-gateway         Up
+    user-service        Up
+    template-service    Up
+    email-service       Up
+    push-service        Up
+    rabbitmq            Up (healthy)
+    redis               Up
+    postgres            Up
+    mailhog             Up
+    ```
+  </Step>
+</Steps>
+
+## Verify installation
+
+Test that services are responding correctly.
+
+### Check health endpoints
+
+<CodeGroup>
+```bash API Gateway
+curl http://localhost:8000/health
+```
+
+```bash User Service
+curl http://localhost:8001/health
+```
+
+```bash Template Service
+curl http://localhost:8002/health
+```
+</CodeGroup>
+
+Each should return:
+```json
+{
+  "status": "healthy",
+  "dependencies": { ... },
+  "timestamp": "2026-03-03T10:00:00Z"
+}
+```
+
+### Access management interfaces
+
+<CardGroup cols={2}>
+  <Card title="RabbitMQ Management" icon="rabbit">
+    **URL**: http://localhost:15673
+    
+    **Credentials**:
+    - Username: `guest`
+    - Password: `guest`
+    
+    View queues, exchanges, and message rates.
+  </Card>
+  
+  <Card title="MailHog Web UI" icon="envelope-open-text">
+    **URL**: http://localhost:8025
+    
+    View all emails sent by the Email Service during testing.
+  </Card>
+</CardGroup>
+
+## Send your first notification
+
+Now that the system is running, let's send a test notification.
+
+<Steps>
+  <Step title="Create a test user">
+    First, register a user in the User Service:
+    
+    ```bash
+    curl -X POST http://localhost:8001/api/v1/users/ \
+      -H "Content-Type: application/json" \
+      -d '{
+        "name": "John Doe",
+        "email": "john@example.com",
+        "push_token": "test-push-token-123",
+        "preferences": {
+          "email": true,
+          "push": true
+        },
+        "password": "securepassword123"
+      }'
+    ```
+    
+    Save the `user_id` from the response for the next step.
+  </Step>
+
+  <Step title="Create a notification template">
+    Create a test template in the Template Service:
+    
+    ```bash
+    curl -X POST http://localhost:8002/api/v1/templates/ \
+      -H "Content-Type: application/json" \
+      -d '{
+        "template_code": "welcome_email",
+        "subject": "Welcome {{name}}!",
+        "body": "Hello {{name}}, welcome to our platform! Click here to get started: {{link}}",
+        "variables": ["name", "link"]
+      }'
+    ```
+  </Step>
+
+  <Step title="Send an email notification">
+    Submit a notification request to the API Gateway:
+    
+    ```bash
+    curl -X POST http://localhost:8000/api/v1/notifications/ \
+      -H "Content-Type: application/json" \
+      -d '{
+        "notification_type": "email",
+        "user_id": "<user_id_from_step_1>",
+        "template_code": "welcome_email",
+        "variables": {
+          "name": "John",
+          "link": "https://example.com/onboarding"
+        },
+        "request_id": "unique-test-request-001",
+        "priority": 1,
+        "metadata": {
+          "campaign": "welcome_series"
+        }
+      }'
+    ```
+    
+    You should receive a response:
+    ```json
+    {
+      "success": true,
+      "message": "Notification queued successfully",
+      "data": {
+        "notification_id": "<uuid>",
+        "status": "pending"
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Verify email delivery">
+    The email will be processed asynchronously:
+    
+    1. Check the RabbitMQ management UI at http://localhost:15673
+    2. Navigate to **Queues** tab
+    3. You should see `email.queue` with 1 message processed
+    4. Open MailHog at http://localhost:8025
+    5. You should see the welcome email in the inbox
+    
+    <Note>
+    Email processing typically takes 1-3 seconds depending on queue load.
+    </Note>
+  </Step>
+</Steps>
+
+## Send a push notification
+
+To test push notifications:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/notifications/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "notification_type": "push",
+    "user_id": "<user_id>",
+    "template_code": "welcome_push",
+    "variables": {
+      "name": "John"
+    },
+    "request_id": "unique-test-request-002",
+    "priority": 1
+  }'
+```
+
+Check the Push Service logs to see the notification being processed:
+
+```bash
+docker compose logs push-service -f
+```
+
+## Common operations
+
+### View service logs
+
+<CodeGroup>
+```bash All services
+docker compose logs -f
+```
+
+```bash Specific service
+docker compose logs api-gateway -f
+```
+
+```bash Last 100 lines
+docker compose logs --tail=100 email-service
+```
+</CodeGroup>
+
+### Restart services
+
+```bash
+# Restart all services
+docker compose restart
+
+# Restart specific service
+docker compose restart api-gateway
+```
+
+### Stop services
+
+```bash
+# Stop all services (preserves data)
+docker compose stop
+
+# Stop and remove containers (preserves volumes)
+docker compose down
+
+# Stop and remove everything including volumes
+docker compose down -v
+```
+
+### Rebuild after code changes
+
+```bash
+# Rebuild and restart specific service
+docker compose up --build api-gateway
+
+# Rebuild all services
+docker compose up --build
+```
+
+## Troubleshooting
 
 <AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+  <Accordion title="RabbitMQ health check failing">
+    If RabbitMQ takes too long to start, increase the health check timeout in `docker-compose.yml`:
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
+    ```yaml
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 10  # Increased from 5
+      start_period: 20s  # Increased from 10s
+    ```
   </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+  
+  <Accordion title="Port already in use">
+    If you see "port is already allocated" errors, check for conflicting services:
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
+    ```bash
+    # Check which process is using port 8000
+    lsof -i :8000
+    
+    # Or use netstat
+    netstat -tuln | grep 8000
+    ```
+    
+    Either stop the conflicting service or modify the port mappings in `docker-compose.yml`.
+  </Accordion>
+  
+  <Accordion title="Database connection errors">
+    Ensure PostgreSQL is fully started before services connect:
+    
+    ```bash
+    # Check PostgreSQL logs
+    docker compose logs postgres
+    
+    # Manually connect to verify
+    docker compose exec postgres psql -U postgres -d notification_db
+    ```
+    
+    Services have `depends_on` configured, but you may need to add health checks for PostgreSQL.
+  </Accordion>
+  
+  <Accordion title="Messages stuck in queue">
+    If messages aren't being processed:
+    
+    1. Check worker service logs for errors:
+       ```bash
+       docker compose logs email-service
+       docker compose logs push-service
+       ```
+    
+    2. Verify workers are connected to RabbitMQ:
+       - Open http://localhost:15673
+       - Go to **Queues** → Click on `email.queue`
+       - Check **Consumers** section
+    
+    3. Purge the queue if needed (development only):
+       ```bash
+       docker compose exec rabbitmq rabbitmqadmin purge queue name=email.queue
+       ```
   </Accordion>
 </AccordionGroup>
 
-### Step 2: Deploy your changes
+## Environment variables reference
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+Key environment variables you may want to customize:
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+### RabbitMQ
+```bash
+RABBITMQ_URL=amqp://rabbitmq:5672
+RABBITMQ_USER=guest
+RABBITMQ_PASS=guest
+RABBITMQ_EXCHANGE=notifications.direct
+RABBITMQ_EMAIL_QUEUE=email.queue
+RABBITMQ_FAILED_QUEUE=failed.queue
+```
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+### PostgreSQL
+```bash
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=your_password_here
+POSTGRES_DB=notification_db
+DB_HOST=postgres
+DB_PORT=5432
+```
 
-### Step 3: Go live
+### Redis
+```bash
+REDIS_HOST=redis
+REDIS_PORT=6379
+```
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+### SMTP (Email Service)
+```bash
+SMTP_HOST=mailhog  # Use external SMTP for production
+SMTP_PORT=1025
+SMTP_FROM=no-reply@test.com
+```
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
+Now that your system is running:
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Explore the architecture" icon="sitemap" href="/architecture">
+    Learn how services communicate and data flows through the system
+  </Card>
+  
+  <Card title="API reference" icon="code" href="/api/gateway/create-notification">
+    View detailed API documentation for all endpoints
+  </Card>
+  
+  <Card title="Configure notification providers" icon="gear">
+    Set up SendGrid, Mailgun, FCM, or OneSignal for production
+  </Card>
+  
+  <Card title="Deploy to production" icon="cloud">
+    Learn about Kubernetes deployment and production best practices
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+<Warning>
+The default configuration uses MailHog for email testing and mock push notification handlers. Before deploying to production, configure real SMTP providers and push notification services.
+</Warning>

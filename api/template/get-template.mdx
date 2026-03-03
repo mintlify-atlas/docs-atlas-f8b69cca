@@ -1,0 +1,206 @@
+---
+title: "Get Template"
+description: "Retrieve a notification template by its code"
+---
+
+## Endpoint
+
+<CodeGroup>
+```bash GET
+GET /api/v1/templates/{template_code}
+```
+</CodeGroup>
+
+## Description
+
+Retrieves a notification template by its unique code. Templates contain the subject, body, and required variables for email or push notifications.
+
+## Authentication
+
+This endpoint may require authentication depending on your system configuration.
+
+## Path Parameters
+
+<ParamField path="template_code" type="string" required>
+  The unique code identifying the template.
+  
+  **Example:** `welcome_email`, `password_reset`, `account_deactivated`
+  
+  **Available templates:**
+  - `welcome_email` - Welcome message for new users
+  - `password_reset` - Password reset instructions
+  - `account_deactivated` - Account deactivation confirmation
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the request was successful
+  
+  **Value:** `true`
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Template data object
+  
+  <Expandable title="properties">
+    <ResponseField name="subject" type="string">
+      Email subject line or push notification title
+      
+      **Example:** `Welcome to Our Platform!`
+    </ResponseField>
+    
+    <ResponseField name="body" type="string">
+      Template body with variable placeholders in `{{variable}}` format
+      
+      **Example:** `Hi {{name}},\n\nThanks for signing up. We're glad to have you onboard!`
+      
+      **Note:** Variables are substituted at runtime using the provided values
+    </ResponseField>
+    
+    <ResponseField name="version" type="string">
+      Template version number (semantic versioning)
+      
+      **Example:** `2.0.0`
+    </ResponseField>
+    
+    <ResponseField name="variables" type="array">
+      List of required variable names that must be provided
+      
+      **Example:** `["name", "link"]`
+      
+      **Note:** All variables must be supplied when creating a notification
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Human-readable message describing the result
+  
+  **Example:** `Template fetched successfully`
+</ResponseField>
+
+## Error Responses
+
+<ResponseField name="404 Not Found" type="error">
+  Returned when the template with the specified code does not exist.
+  
+  ```json
+  {
+    "detail": "Template not found"
+  }
+  ```
+</ResponseField>
+
+## Example Request
+
+<CodeGroup>
+```bash cURL - Welcome Email
+curl http://localhost:8002/api/v1/templates/welcome_email
+```
+
+```bash cURL - Password Reset
+curl http://localhost:8002/api/v1/templates/password_reset
+```
+
+```javascript JavaScript
+fetch('http://localhost:8002/api/v1/templates/welcome_email')
+  .then(response => response.json())
+  .then(data => console.log(data))
+```
+
+```python Python
+import requests
+
+response = requests.get('http://localhost:8002/api/v1/templates/welcome_email')
+print(response.json())
+```
+</CodeGroup>
+
+## Example Response
+
+```json Welcome Email Template
+{
+  "success": true,
+  "data": {
+    "subject": "Welcome to Our Platform!",
+    "body": "Hi {{name}},\n\nThanks for signing up. We're glad to have you onboard!",
+    "version": "2.0.0",
+    "variables": ["name"]
+  },
+  "message": "Template fetched successfully"
+}
+```
+
+```json Password Reset Template
+{
+  "success": true,
+  "data": {
+    "subject": "Reset Your Password",
+    "body": "Hi {{name}},\n\nClick here to reset your password: {{link}}",
+    "version": "1.5.4",
+    "variables": ["name", "link"]
+  },
+  "message": "Template fetched successfully"
+}
+```
+
+```json Account Deactivated Template
+{
+  "success": true,
+  "data": {
+    "subject": "Your Account Has Been Deactivated",
+    "body": "Hi {{name}},\n\nWe noticed you deactivated your account. We hope to see you back soon.",
+    "version": "1.0.0",
+    "variables": ["name"]
+  },
+  "message": "Template fetched successfully"
+}
+```
+
+```json 404 Not Found
+{
+  "detail": "Template not found"
+}
+```
+
+## Available Templates
+
+### welcome_email
+Sent to new users after registration.
+
+- **Subject:** Welcome to Our Platform!
+- **Required variables:** `name`
+- **Version:** 2.0.0
+
+### password_reset
+Sent when a user requests a password reset.
+
+- **Subject:** Reset Your Password
+- **Required variables:** `name`, `link`
+- **Version:** 1.5.4
+
+### account_deactivated
+Sent when a user deactivates their account.
+
+- **Subject:** Your Account Has Been Deactivated
+- **Required variables:** `name`
+- **Version:** 1.0.0
+
+## Template Variables
+
+Variables in templates use the `{{variable_name}}` syntax and are replaced at runtime when sending notifications. All required variables must be provided in the notification request.
+
+**Common variables:**
+- `{{name}}` - User's full name
+- `{{link}}` - Action URL or link
+- `{{email}}` - User's email address
+
+## Notes
+
+- Templates are stored in `templates.json` and loaded at runtime
+- Future versions may support database storage and dynamic template creation
+- Templates can be cached in Redis for faster access
+- Version numbers follow semantic versioning (MAJOR.MINOR.PATCH)
+- The API Gateway fetches templates when processing notification requests
+- Missing or incorrect variables will cause notification processing to fail

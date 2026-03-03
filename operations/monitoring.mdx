@@ -1,0 +1,273 @@
+---
+title: 'Monitoring and Observability'
+description: 'Monitor system health, track metrics, and observe system behavior'
+---
+
+## Overview
+
+The distributed notification system provides comprehensive monitoring and observability features to track system health, performance, and message flow across all microservices.
+
+## Logging Strategy
+
+### Correlation IDs
+
+Every request is assigned a unique correlation ID to track the full notification lifecycle across all services.
+
+**API Gateway Implementation:**
+
+```typescript
+import { Injectable, NestMiddleware } from '@nestjs/common';
+import { Request, Response, NextFunction } from 'express';
+import { v4 as uuidv4 } from 'uuid';
+
+@Injectable()
+export class CorrelationIdMiddleware implements NestMiddleware {
+  use(req: Request, res: Response, next: NextFunction) {
+    const correlationId = req.headers['x-correlation-id'] as string || uuidv4();
+    req.headers['x-correlation-id'] = correlationId;
+    res.setHeader('X-Correlation-Id', correlationId);
+    next();
+  }
+}
+```
+
+**Logging Interceptor:**
+
+```typescript
+@Injectable()
+export class LoggingInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const request = context.switchToHttp().getRequest<Request>();
+    const response = context.switchToHttp().getResponse<Response>();
+    const correlationId = request.headers['x-correlation-id'] as string || uuidv4();
+    
+    response.set('X-Correlation-Id', correlationId);
+    
+    const { method, url, ip } = request;
+    console.log(`${correlationId} - ${ip} - ${method} ${url}`);
+    
+    return next.handle().pipe(
+      tap(() => {
+        console.log(`${correlationId} - ${method} ${url} - ${Date.now() - now}ms`);
+      }),
+    );
+  }
+}
+```
+
+### Log Format
+
+All services use structured logging with the following information:
+
+- **Correlation ID**: Tracks requests across services
+- **Timestamp**: When the event occurred
+- **Service Name**: Which service generated the log
+- **Log Level**: INFO, WARN, ERROR, DEBUG
+- **Message**: Human-readable description
+- **Metadata**: Additional context (user_id, request_id, etc.)
+
+**Example Log Output:**
+
+```
+[12:34:56 INF] abc123-def456 - 192.168.1.1 - POST /api/v1/notifications - Mozilla/5.0 - 200
+[12:34:56 INF] abc123-def456 - POST /api/v1/notifications - 45ms
+```
+
+## Key Metrics to Track
+
+### Queue Metrics
+
+**RabbitMQ Queue Lengths:**
+
+- `email.queue` depth
+- `push.queue` depth
+- `failed.queue` depth (dead letter queue)
+
+**Message Rates:**
+
+- Messages published per second
+- Messages consumed per second
+- Message acknowledgment rate
+- Message rejection rate
+
+### Service Metrics
+
+**Response Times:**
+
+- API Gateway: `/api/v1/notifications` endpoint latency
+- User Service: `/users/{user_id}` lookup time
+- Template Service: `/templates/{template_code}` retrieval time
+- Email/Push Service: Message processing time
+
+**Error Rates:**
+
+- HTTP 4xx errors (client errors)
+- HTTP 5xx errors (server errors)
+- RabbitMQ connection failures
+- Database connection errors
+- SMTP/Push notification delivery failures
+
+**Resource Utilization:**
+
+- CPU usage per service
+- Memory consumption
+- Network I/O
+- Database connection pool usage
+
+### Notification Metrics
+
+**Delivery Success:**
+
+- Total notifications sent
+- Successful deliveries
+- Failed deliveries
+- Retry attempts
+- Average delivery time
+
+**User Preferences:**
+
+- Notifications filtered by user preferences
+- Preference cache hit rate (Redis)
+
+## Management UIs
+
+### RabbitMQ Management UI
+
+Access the RabbitMQ management interface to monitor message queues:
+
+**URL:** `http://localhost:15673`
+
+**Default Credentials:**
+
+- Username: `guest`
+- Password: `guest`
+
+**Features:**
+
+- View queue depths and message rates
+- Monitor connections and channels
+- Inspect message contents
+- Configure exchanges and bindings
+- Track consumer performance
+- View dead letter queue messages
+
+<Tip>
+  The RabbitMQ UI is exposed on port **15673** (mapped from internal port 15672) in the Docker Compose setup.
+</Tip>
+
+### MailHog Email Testing UI
+
+MailHog captures all outgoing emails for testing purposes:
+
+**URL:** `http://localhost:8025`
+
+**Features:**
+
+- View all sent emails in real-time
+- Inspect email headers and content
+- Test HTML and plain text rendering
+- Download email files (.eml format)
+- Search emails by recipient, subject, or content
+- Delete test emails
+
+<Note>
+  MailHog is a development tool. In production, replace with a real SMTP service like SendGrid, Mailgun, or AWS SES.
+</Note>
+
+### SMTP Configuration
+
+The Email Service uses the following SMTP settings:
+
+```yaml
+environment:
+  SMTP_HOST: mailhog
+  SMTP_PORT: 1025
+  SMTP_FROM: no-reply@test.com
+```
+
+## Recommended Monitoring Tools
+
+### Application Performance Monitoring (APM)
+
+**Prometheus + Grafana:**
+
+- Collect metrics from all services
+- Create dashboards for queue depths, latency, error rates
+- Set up alerts for anomalies
+- Time-series data storage and visualization
+
+**Datadog / New Relic:**
+
+- End-to-end distributed tracing
+- Automatic service dependency mapping
+- Custom metrics and dashboards
+- Anomaly detection and alerting
+
+### Log Aggregation
+
+**ELK Stack (Elasticsearch, Logstash, Kibana):**
+
+- Centralized log collection from all services
+- Full-text search across logs
+- Correlation ID-based log tracing
+- Custom dashboards and visualizations
+
+**Loki + Grafana:**
+
+- Lightweight log aggregation
+- Integration with existing Grafana setup
+- Label-based log filtering
+
+### Distributed Tracing
+
+**Jaeger / Zipkin:**
+
+- Trace requests across microservices
+- Visualize service dependencies
+- Identify performance bottlenecks
+- Root cause analysis for failures
+
+### Alerting Strategy
+
+Set up alerts for critical conditions:
+
+**Queue Depth Alerts:**
+
+- Warning: Queue depth > 1000 messages
+- Critical: Queue depth > 5000 messages
+
+**Error Rate Alerts:**
+
+- Warning: Error rate > 5%
+- Critical: Error rate > 10%
+
+**Service Health Alerts:**
+
+- Critical: Service health check fails for > 1 minute
+- Warning: Service response time > 2 seconds
+
+**Dead Letter Queue:**
+
+- Warning: Any messages in `failed.queue`
+- Immediate investigation required
+
+## Monitoring Best Practices
+
+1. **Track Correlation IDs**: Always log correlation IDs to trace requests end-to-end
+2. **Set Baseline Metrics**: Establish normal operating ranges for key metrics
+3. **Alert on Trends**: Monitor rate of change, not just absolute values
+4. **Retain Logs**: Keep logs for at least 30 days for debugging
+5. **Dashboard Everything**: Create service-specific and system-wide dashboards
+6. **Test Alerts**: Regularly verify that alerting systems work correctly
+7. **Document Runbooks**: Create playbooks for common alert scenarios
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Health Checks" icon="heartbeat" href="/operations/health-checks">
+    Configure health check endpoints and service dependency checks
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Diagnose and resolve common system issues
+  </Card>
+</CardGroup>

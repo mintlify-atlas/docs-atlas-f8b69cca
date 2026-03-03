@@ -1,0 +1,274 @@
+---
+title: Docker Setup
+description: Containerization strategy and Docker configuration for the distributed notification system
+---
+
+## Overview
+
+The distributed notification system uses Docker and Docker Compose to containerize all services and dependencies. This approach ensures consistent environments across development, testing, and production deployments.
+
+### Containerization Strategy
+
+The system employs a multi-container architecture with:
+
+- **Multi-stage builds** for Node.js services to minimize image sizes
+- **Official base images** (Alpine Linux for Node.js, .NET 9.0 for C#, Python 3.12-slim)
+- **Production-optimized layers** with separate build and runtime stages
+- **Health checks** for critical infrastructure services
+- **Named volumes** for persistent data storage
+
+## Docker Compose Services
+
+The `docker-compose.yml` orchestrates 9 containers:
+
+### Application Services
+
+| Service | Port Mapping | Technology | Description |
+|---------|--------------|------------|-------------|
+| **api-gateway** | 8000:8000 | Node.js 20 (Alpine) | Main entry point for notification requests |
+| **user-service** | 8001:8081 | Node.js 20 (Alpine) | User management and preferences |
+| **template-service** | 8002:8002 | Python 3.12 (FastAPI) | Notification template management |
+| **email-service** | 8003:8080 | .NET 9.0 (C#) | Email notification processing |
+| **push-service** | 8004:8004 | Node.js 20 (Alpine) | Push notification handling |
+
+### Infrastructure Services
+
+| Service | Port Mapping | Image | Description |
+|---------|--------------|-------|-------------|
+| **rabbitmq** | 5673:5672, 15673:15672 | rabbitmq:3.11-management | Message broker for async communication |
+| **redis** | 6379:6379 | redis:7-alpine | Caching and rate limiting |
+| **postgres** | 5432:5432 | postgres:15 | Primary database |
+| **mailhog** | 1025:1025, 8025:8025 | mailhog/mailhog | SMTP testing tool |
+
+## Network Configuration
+
+All services communicate through a custom bridge network:
+
+```yaml
+networks:
+  app-network:
+    driver: bridge
+```
+
+**Benefits:**
+- Services can reference each other by container name (e.g., `http://user-service:8081`)
+- Isolated from host network and other Docker networks
+- Automatic DNS resolution between containers
+
+## Volume Management
+
+Three named volumes persist data across container restarts:
+
+| Volume | Mount Point | Purpose |
+|--------|-------------|----------|
+| `pgdata` | `/var/lib/postgresql/data` | PostgreSQL database files |
+| `rabbitmq_data` | `/var/lib/rabbitmq` | RabbitMQ queues and messages |
+| `redis_data` | `/data` | Redis cache and persistence |
+
+<Warning>
+Volumes are not automatically backed up. Implement a backup strategy for production deployments to prevent data loss.
+</Warning>
+
+## Building and Running
+
+### Prerequisites
+
+- Docker Engine 20.10+
+- Docker Compose 2.0+
+- 4GB+ available RAM
+- 10GB+ available disk space
+
+### Build All Services
+
+```bash
+docker compose build
+```
+
+This builds all five microservices using their respective Dockerfiles.
+
+### Start the System
+
+```bash
+docker compose up -d
+```
+
+Services start in dependency order:
+1. Infrastructure (postgres, redis, rabbitmq, mailhog)
+2. User Service and Template Service (depend on postgres)
+3. API Gateway, Email Service, Push Service (depend on infrastructure + user/template services)
+
+### Verify Services are Running
+
+```bash
+docker compose ps
+```
+
+Expected output should show all 9 containers with status "Up".
+
+### View Logs
+
+```bash
+# All services
+docker compose logs -f
+
+# Specific service
+docker compose logs -f api-gateway
+```
+
+### Stop the System
+
+```bash
+# Stop containers (preserve volumes)
+docker compose down
+
+# Stop and remove volumes (WARNING: deletes data)
+docker compose down -v
+```
+
+## Individual Dockerfile Highlights
+
+### API Gateway (`api-gateway/Dockerfile`)
+
+**Type:** Multi-stage Node.js build
+
+```dockerfile
+# Stage 1: Build
+FROM node:20-alpine AS builder
+RUN npm install -g rimraf
+WORKDIR /usr/src/app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+
+# Stage 2: Production
+FROM node:20-alpine
+WORKDIR /usr/src/app
+COPY package*.json ./
+RUN npm ci --omit=dev
+COPY --from=builder /usr/src/app/dist ./dist
+EXPOSE 8000
+CMD ["node", "dist/main"]
+```
+
+**Key Features:**
+- Two-stage build separates compilation from runtime
+- `npm ci --omit=dev` installs only production dependencies
+- Alpine base reduces image size (~120MB vs ~900MB for standard Node)
+
+### User Service (`user-service/Dockerfile`)
+
+**Type:** Multi-stage Node.js build
+
+Similar structure to API Gateway:
+- Node.js 20 Alpine base
+- Multi-stage build for optimization
+- Production dependencies only in final stage
+- Exposes port 8001
+
+### Template Service (`template-service/Dockerfile`)
+
+**Type:** Single-stage Python build
+
+```dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 8002
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8002"]
+```
+
+**Key Features:**
+- Python 3.12-slim reduces image size
+- `--no-cache-dir` prevents pip cache bloat
+- uvicorn ASGI server for FastAPI
+
+### Email Service (`email-service/EmailService/Dockerfile`)
+
+**Type:** Multi-stage .NET build
+
+```dockerfile
+# Build stage
+FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+WORKDIR /src
+COPY ["EmailService/EmailService.csproj", "EmailService/"]
+RUN dotnet restore "./EmailService/EmailService.csproj"
+COPY . .
+WORKDIR "EmailService"
+RUN dotnet build "./EmailService.csproj" -c Release -o /app/build
+
+# Publish stage
+FROM build AS publish
+RUN dotnet publish "./EmailService.csproj" -c Release -o /app/publish /p:UseAppHost=false
+
+# Runtime stage
+FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
+WORKDIR /app
+COPY --from=publish /app/publish .
+EXPOSE 8080
+ENTRYPOINT ["dotnet", "EmailService.dll"]
+```
+
+**Key Features:**
+- Three-stage build (build, publish, runtime)
+- SDK image only used for compilation
+- Minimal ASP.NET runtime for final image
+- Exposes ports 8080 and 8081
+
+### Push Service (`push-service/Dockerfile`)
+
+**Type:** Multi-stage Node.js build
+
+Similar to API Gateway and User Service:
+- Node.js 20 Alpine base
+- Multi-stage optimization
+- Exposes port 8004
+- Command: `node dist/main.js`
+
+## Health Checks
+
+RabbitMQ includes a health check configuration:
+
+```yaml
+healthcheck:
+  test: ["CMD", "rabbitmq-diagnostics", "ping"]
+  interval: 5s
+  timeout: 10s
+  retries: 5
+  start_period: 10s
+```
+
+The email service depends on RabbitMQ's health status:
+
+```yaml
+email-service:
+  depends_on:
+    rabbitmq:
+      condition: service_healthy
+```
+
+This ensures the email service only starts after RabbitMQ is ready to accept connections.
+
+## Best Practices
+
+<Check>
+**Use `.dockerignore` files** to exclude unnecessary files (node_modules, .git, etc.) from build contexts
+</Check>
+
+<Check>
+**Layer caching optimization** - Copy `package.json` before source code to cache dependency installation
+</Check>
+
+<Check>
+**Minimal base images** - Alpine and slim variants significantly reduce image sizes and attack surface
+</Check>
+
+<Check>
+**Multi-stage builds** - Separate build tools from runtime, keeping final images lean
+</Check>
+
+<Warning>
+The default configuration uses `restart: unless-stopped` for infrastructure services. In production, consider using orchestration tools like Kubernetes for more sophisticated restart policies.
+</Warning>

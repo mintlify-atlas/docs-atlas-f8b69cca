@@ -1,0 +1,141 @@
+---
+title: Introduction
+description: A distributed notification system built with microservices architecture for sending emails and push notifications at scale
+---
+
+## Distributed notification system
+
+The Distributed Notification System is a robust, scalable microservices-based platform designed to handle email and push notifications asynchronously. Built with modern DevOps practices, it leverages Docker orchestration, message queuing, and caching to deliver notifications reliably at scale.
+
+<Note>
+This system is designed for Stage 4 backend development, showcasing microservices communication patterns, asynchronous processing, and containerized deployment strategies.
+</Note>
+
+## Architecture overview
+
+The system consists of **5 core microservices** that communicate both synchronously (via REST) and asynchronously (via RabbitMQ):
+
+<CardGroup cols={2}>
+  <Card title="API Gateway" icon="gateway" iconType="duotone">
+    Entry point for all client requests. Validates, authenticates, and routes notification requests to appropriate queues.
+  </Card>
+  <Card title="User Service" icon="users" iconType="duotone">
+    Manages user information, notification preferences, and maintains user data in PostgreSQL with Redis caching.
+  </Card>
+  <Card title="Template Service" icon="file-lines" iconType="duotone">
+    Stores and manages notification templates with variable substitution, versioning, and multi-language support.
+  </Card>
+  <Card title="Email Service" icon="envelope" iconType="duotone">
+    Consumes messages from RabbitMQ email queue and sends emails via SMTP/API providers (SendGrid, Mailgun, Gmail).
+  </Card>
+  <Card title="Push Service" icon="bell" iconType="duotone">
+    Consumes messages from RabbitMQ push queue and sends push notifications via FCM, OneSignal, or Web Push.
+  </Card>
+</CardGroup>
+
+## Key features
+
+### Asynchronous message processing
+
+All notifications are processed asynchronously using **RabbitMQ** with dedicated queues for email and push notifications. This ensures high throughput and fault tolerance.
+
+- **Exchange**: `notifications.direct`
+- **Queues**: `email.queue`, `push.queue`, `failed.queue` (dead letter queue)
+- **Retry mechanism**: Exponential backoff for failed deliveries
+
+### Intelligent caching with Redis
+
+User preferences are cached in **Redis** to minimize database lookups and improve response times. The caching layer ensures notification workers can quickly verify user preferences before sending.
+
+### Data persistence with PostgreSQL
+
+Each service maintains its own PostgreSQL database:
+- **User Service**: User information and preferences (`users_db`)
+- **Template Service**: Templates and version history
+- **Shared store**: Notification status tracking (pending, delivered, failed)
+
+### Idempotency guarantees
+
+Every notification request includes a unique `request_id` to prevent duplicate deliveries. The system checks the shared PostgreSQL store before processing any notification.
+
+### Health monitoring
+
+All services expose a `/health` endpoint for container orchestration and monitoring. Correlation IDs track the full notification lifecycle across services.
+
+### Docker orchestration
+
+The entire system is containerized using Docker and orchestrated with Docker Compose, making it easy to deploy, scale, and test locally.
+
+## Communication patterns
+
+<AccordionGroup>
+  <Accordion title="Synchronous (REST)">
+    Used for quick lookups and queries:
+    - Fetching user data from User Service
+    - Retrieving templates from Template Service
+    - Querying notification status
+  </Accordion>
+  
+  <Accordion title="Asynchronous (RabbitMQ)">
+    Used for notification delivery:
+    - API Gateway publishes notification requests to queues
+    - Email/Push services consume messages and send notifications
+    - Failed messages are retried with exponential backoff
+    - Permanently failed messages move to dead letter queue
+  </Accordion>
+</AccordionGroup>
+
+## Service ports
+
+| Service | Port | Purpose |
+|---------|------|----------|
+| API Gateway | 8000 | Client-facing REST API |
+| User Service | 8001 | User management endpoints |
+| Template Service | 8002 | Template management |
+| Email Service | 8003 | Email worker (internal) |
+| Push Service | 8004 | Push notification worker (internal) |
+| RabbitMQ | 5672, 15672 | Message queue + management UI |
+| PostgreSQL | 5432 | Relational database |
+| Redis | 6379 | Cache and session store |
+
+<Warning>
+All services require RabbitMQ, Redis, and PostgreSQL to be running. Use Docker Compose to ensure proper service dependencies and startup order.
+</Warning>
+
+## Get started
+
+<CardGroup cols={3}>
+  <Card title="Quick start" icon="rocket" href="/quickstart">
+    Get the system running locally in minutes with Docker Compose
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Deep dive into the microservices architecture and communication flows
+  </Card>
+  <Card title="API reference" icon="code" href="/api/gateway/create-notification">
+    Explore the REST API endpoints and message formats
+  </Card>
+</CardGroup>
+
+## CI/CD integration
+
+The system includes continuous integration and deployment:
+
+- **CI**: Builds Docker images, runs tests, and blocks PR merges on failures
+- **CD**: Triggered on merge to main, rebuilds images and prepares for deployment
+
+## Design principles
+
+<Steps>
+  <Step title="Separation of concerns">
+    Each microservice has a single, well-defined responsibility
+  </Step>
+  <Step title="Fault tolerance">
+    Services handle failures gracefully with retry mechanisms and circuit breakers
+  </Step>
+  <Step title="Horizontal scalability">
+    Services can scale independently based on load
+  </Step>
+  <Step title="Observability">
+    Correlation IDs and structured logging enable full lifecycle tracking
+  </Step>
+</Steps>

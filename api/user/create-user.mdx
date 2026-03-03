@@ -1,0 +1,233 @@
+---
+title: "Create User"
+description: "Create a new user account with notification preferences"
+---
+
+## Endpoint
+
+<CodeGroup>
+```bash POST
+POST /api/v1/users
+```
+</CodeGroup>
+
+## Description
+
+Creates a new user account in the system with notification preferences. The user can be configured to receive email and/or push notifications.
+
+## Authentication
+
+This endpoint may require authentication depending on your system configuration.
+
+## Request Body
+
+<ParamField path="name" type="string" required>
+  The full name of the user.
+  
+  **Example:** `John Doe`
+  
+  **Validation:** Must be a non-empty string
+</ParamField>
+
+<ParamField path="email" type="string (email)" required>
+  The email address of the user.
+  
+  **Example:** `john.doe@example.com`
+  
+  **Validation:** Must be a valid email address format
+</ParamField>
+
+<ParamField path="push_token" type="string">
+  Firebase Cloud Messaging (FCM) token for push notifications.
+  
+  **Example:** `fcm_token_string_example`
+  
+  **Note:** Optional - provide this if the user wants to receive push notifications
+</ParamField>
+
+<ParamField path="preferences" type="object">
+  User notification preferences.
+  
+  <Expandable title="properties">
+    <ParamField path="email" type="boolean">
+      Whether the user wants to receive email notifications
+      
+      **Example:** `true`
+      
+      **Default:** `true`
+    </ParamField>
+    
+    <ParamField path="push" type="boolean">
+      Whether the user wants to receive push notifications
+      
+      **Example:** `false`
+      
+      **Default:** `false`
+    </ParamField>
+  </Expandable>
+  
+  **Example:** `{"email": true, "push": false}`
+</ParamField>
+
+<ParamField path="password" type="string" required>
+  User password for authentication.
+  
+  **Note:** This field is required for user account creation. Ensure proper password hashing is implemented server-side.
+</ParamField>
+
+## Response
+
+<ResponseField name="user_id" type="string (UUID)">
+  Unique identifier assigned to the newly created user
+  
+  **Example:** `123e4567-e89b-12d3-a456-426614174000`
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Full name of the user
+  
+  **Example:** `John Doe`
+</ResponseField>
+
+<ResponseField name="email" type="string">
+  Email address of the user
+  
+  **Example:** `john.doe@example.com`
+</ResponseField>
+
+<ResponseField name="push_token" type="string | null">
+  Firebase Cloud Messaging token
+  
+  **Example:** `fcm_token_string_example`
+</ResponseField>
+
+<ResponseField name="preferences" type="object">
+  User notification preferences
+  
+  **Example:** `{"email": true, "push": false}`
+</ResponseField>
+
+<ResponseField name="created_at" type="string (ISO 8601)">
+  Timestamp when the user was created
+  
+  **Example:** `2024-03-15T10:30:00.000Z`
+</ResponseField>
+
+## Error Responses
+
+<ResponseField name="400 Bad Request" type="error">
+  Returned when the request payload is invalid.
+  
+  **Example scenarios:**
+  - Invalid email format
+  - Missing required fields
+  - Email already exists
+  
+  ```json
+  {
+    "statusCode": 400,
+    "message": [
+      "email must be an email",
+      "name should not be empty"
+    ],
+    "error": "Bad Request"
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="409 Conflict" type="error">
+  Returned when a user with the specified email already exists.
+  
+  ```json
+  {
+    "statusCode": 409,
+    "message": "User with email john.doe@example.com already exists",
+    "error": "Conflict"
+  }
+  ```
+</ResponseField>
+
+## Example Request
+
+<CodeGroup>
+```bash cURL
+curl -X POST http://localhost:8001/api/v1/users \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "John Doe",
+    "email": "john.doe@example.com",
+    "push_token": "fcm_token_abc123xyz789",
+    "preferences": {
+      "email": true,
+      "push": false
+    },
+    "password": "securePassword123"
+  }'
+```
+
+```javascript JavaScript
+fetch('http://localhost:8001/api/v1/users', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    name: 'John Doe',
+    email: 'john.doe@example.com',
+    push_token: 'fcm_token_abc123xyz789',
+    preferences: {
+      email: true,
+      push: false
+    },
+    password: 'securePassword123'
+  })
+})
+  .then(response => response.json())
+  .then(data => console.log(data))
+```
+
+```python Python
+import requests
+
+response = requests.post(
+    'http://localhost:8001/api/v1/users',
+    headers={'Content-Type': 'application/json'},
+    json={
+        'name': 'John Doe',
+        'email': 'john.doe@example.com',
+        'push_token': 'fcm_token_abc123xyz789',
+        'preferences': {
+            'email': True,
+            'push': False
+        },
+        'password': 'securePassword123'
+    }
+)
+print(response.json())
+```
+</CodeGroup>
+
+## Example Response
+
+```json 201 Created
+{
+  "user_id": "123e4567-e89b-12d3-a456-426614174000",
+  "name": "John Doe",
+  "email": "john.doe@example.com",
+  "push_token": "fcm_token_abc123xyz789",
+  "preferences": {
+    "email": true,
+    "push": false
+  },
+  "created_at": "2024-03-15T10:30:00.000Z"
+}
+```
+
+## Notes
+
+- User preferences are stored in PostgreSQL and cached in Redis for quick access
+- The `push_token` is required if the user wants to receive push notifications
+- Email uniqueness is enforced at the database level
+- Passwords are hashed before storage (never stored in plain text)
+- After creation, the user can receive notifications based on their preferences
+- The User Service validates all fields using NestJS validation pipes

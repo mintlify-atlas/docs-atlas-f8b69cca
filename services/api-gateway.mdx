@@ -1,0 +1,360 @@
+---
+title: API Gateway
+description: Central entry point for the distributed notification system
+---
+
+## Overview
+
+The API Gateway serves as the central entry point for all notification requests in the distributed notification system. Built with NestJS and TypeScript, it handles request validation, rate limiting, correlation tracking, and intelligent routing to downstream services.
+
+## Purpose and Responsibilities
+
+- **Request validation** - Validates incoming notification requests using class-validator DTOs
+- **Rate limiting** - Protects downstream services with Redis-backed throttling
+- **Correlation tracking** - Assigns unique correlation IDs to every request for distributed tracing
+- **Service orchestration** - Fetches user and template data from respective services
+- **Message routing** - Routes notifications to RabbitMQ queues based on notification type
+- **API documentation** - Provides Swagger/OpenAPI documentation at `/api`
+
+## Tech Stack
+
+- **Framework**: NestJS 10.x
+- **Language**: TypeScript 5.x
+- **Message Broker**: RabbitMQ (via amqp-connection-manager)
+- **Cache/Rate Limiting**: Redis (ioredis)
+- **Validation**: class-validator, class-transformer
+- **API Documentation**: Swagger/OpenAPI
+- **HTTP Client**: Axios (for service-to-service communication)
+
+## Configuration
+
+**Port**: 8000 (default 3000)
+
+**Environment Variables**:
+```bash
+PORT=3000
+RABBITMQ_URL=amqp://guest:guest@localhost:5672
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+THROTTLE_TTL=60      # Rate limit window in seconds
+THROTTLE_LIMIT=10    # Max requests per window
+```
+
+## Key Features
+
+### 1. Rate Limiting
+
+The gateway implements Redis-backed rate limiting to protect downstream services from overload.
+
+<Info>
+Rate limits are configurable via `THROTTLE_TTL` and `THROTTLE_LIMIT` environment variables.
+Default: 10 requests per 60 seconds.
+</Info>
+
+**Implementation** (app.module.ts:47-63):
+```typescript
+ThrottlerModule.forRootAsync({
+  imports: [ConfigModule],
+  inject: [ConfigService],
+  useFactory: (configService: ConfigService) => ({
+    throttlers: [
+      {
+        ttl: configService.get<number>('THROTTLE_TTL', 60),
+        limit: configService.get<number>('THROTTLE_LIMIT', 10),
+      },
+    ],
+    storage: new ThrottlerStorageRedisService(new Redis({
+      host: configService.get<string>('REDIS_HOST', 'localhost'),
+      port: configService.get<number>('REDIS_PORT', 6379),
+      password: configService.get<string>('REDIS_PASSWORD'),
+    })),
+  }),
+})
+```
+
+### 2. Correlation IDs
+
+Every request is assigned a unique correlation ID for distributed tracing across services.
+
+**Implementation** (main.ts:26-31):
+```typescript
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const correlationId = req.headers['x-correlation-id'] as string || uuidv4();
+  req.headers['x-correlation-id'] = correlationId;
+  res.setHeader('X-Correlation-Id', correlationId);
+  next();
+});
+```
+
+Clients can provide their own correlation ID via the `X-Correlation-Id` header, or one will be auto-generated.
+
+### 3. Request Validation
+
+All incoming requests are validated using DTOs with class-validator decorators.
+
+**Notification Request DTO** (dto/create-notification.dto.ts:29-84):
+```typescript
+export class NotificationRequestDto {
+  @IsEnum(NotificationType)
+  notification_type: NotificationType;  // 'email' | 'push'
+
+  @IsUUID()
+  user_id: string;
+
+  @IsString()
+  template_code: string;
+
+  @ValidateNested()
+  @Type(() => UserData)
+  variables: UserData;
+
+  @IsString()
+  request_id: string;
+
+  @IsOptional()
+  @IsNumber()
+  priority?: number;  // 1-5
+
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, any>;
+}
+```
+
+**Global Validation Pipe** (main.ts:34-38):
+```typescript
+app.useGlobalPipes(new ValidationPipe({
+  whitelist: true,           // Strip unknown properties
+  forbidNonWhitelisted: true, // Reject unknown properties
+  transform: true,            // Auto-transform payloads
+}));
+```
+
+### 4. Service Orchestration
+
+The gateway fetches user and template data in parallel before routing to queues.
+
+**Parallel Data Fetching** (notifications.service.ts:26-29):
+```typescript
+const [user, template] = await Promise.all([
+  this.userService.getUser(dto.user_id),
+  this.templateService.getTemplate(dto.template_code),
+]);
+```
+
+### 5. RabbitMQ Routing
+
+Notifications are routed to different queues based on `notification_type`.
+
+**Exchange Configuration**:
+- **Exchange**: `notifications.direct`
+- **Type**: Direct
+- **Routing Keys**: `email`, `push`
+
+**Publishing Logic** (notifications.service.ts:32-48):
+```typescript
+const messageData = {
+  request_id: dto.request_id,
+  notification_id: notificationId,
+  user: user,
+  template: template,
+  variables: dto.variables,
+  metadata: dto.metadata || {},
+};
+
+const routingKey = dto.notification_type; // 'email' or 'push'
+await this.publisher.publish(routingKey, messageData);
+```
+
+**Publisher Service** (rabbitmq/publisher.service.ts:28-43):
+```typescript
+async publish(routingKey: string, payload: any): Promise<void> {
+  const content = Buffer.from(JSON.stringify(payload));
+  const options: Options.Publish = {
+    contentType: 'application/json',
+    deliveryMode: 2,  // Persistent messages
+  };
+
+  await this.channel.publish(this.exchange, routingKey, content, options);
+  this.logger.log(`Published to "${this.exchange}" with key "${routingKey}"`);
+}
+```
+
+<Note>
+Messages are published with `deliveryMode: 2` to ensure persistence and survive broker restarts.
+</Note>
+
+## API Endpoints
+
+### POST /api/v1/notifications
+
+Queue a notification for delivery.
+
+**Request Body**:
+```json
+{
+  "notification_type": "email",
+  "user_id": "123e4567-e89b-12d3-a456-426614174000",
+  "template_code": "welcome_email",
+  "variables": {
+    "name": "John Doe",
+    "link": "https://example.com"
+  },
+  "request_id": "req-123e4567-e89b-12d3-a456-426614174000",
+  "priority": 1,
+  "metadata": {
+    "title": "Welcome!"
+  }
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "success": true,
+  "data": {
+    "notification_id": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "queued"
+  },
+  "message": "Notification queued successfully"
+}
+```
+
+**Error Response** (400 Bad Request):
+```json
+{
+  "success": false,
+  "error": "User with ID xyz not found",
+  "message": "Failed to process notification"
+}
+```
+
+### GET /health
+
+Health check endpoint for monitoring and orchestration.
+
+**Response** (200 OK):
+```json
+{
+  "status": "ok",
+  "timestamp": "2024-03-15T10:30:00.000Z"
+}
+```
+
+### GET /api
+
+Swagger UI for interactive API documentation.
+
+## Dependencies on Other Services
+
+### User Service (Port 8001)
+
+The gateway calls the User Service to fetch user data and preferences.
+
+**Endpoint**: `GET /api/v1/users/:id`
+
+**Implementation** (services/user.service.ts):
+```typescript
+async getUser(userId: string) {
+  const response = await this.httpService.axiosRef.get(
+    `${this.userServiceUrl}/api/v1/users/${userId}`
+  );
+  return response.data;
+}
+```
+
+### Template Service (Port 8002)
+
+The gateway calls the Template Service to fetch notification templates.
+
+**Endpoint**: `GET /api/v1/templates/:code`
+
+**Implementation** (services/template.service.ts):
+```typescript
+async getTemplate(code: string) {
+  const response = await this.httpService.axiosRef.get(
+    `${this.templateServiceUrl}/api/v1/templates/${code}`
+  );
+  return response.data;
+}
+```
+
+### RabbitMQ Message Broker
+
+The gateway publishes messages to RabbitMQ for asynchronous processing by email and push services.
+
+**Queues**:
+- `email.queue` - Consumed by Email Service
+- `push.queue` - Consumed by Push Service
+
+## Logging and Observability
+
+### Logging Interceptor
+
+The gateway includes a global logging interceptor for request/response logging.
+
+**Implementation** (main.ts:41):
+```typescript
+app.useGlobalInterceptors(new LoggingInterceptor());
+```
+
+### Correlation ID Tracking
+
+All logs include correlation IDs for tracing requests across services.
+
+<Warning>
+Ensure downstream services propagate the `X-Correlation-Id` header for end-to-end tracing.
+</Warning>
+
+## Running the Service
+
+### Development
+```bash
+npm run start:dev
+```
+
+### Production
+```bash
+npm run build
+npm run start:prod
+```
+
+### Docker
+```bash
+docker build -t api-gateway .
+docker run -p 8000:3000 \
+  -e RABBITMQ_URL=amqp://rabbitmq:5672 \
+  -e REDIS_HOST=redis \
+  api-gateway
+```
+
+## Error Handling
+
+The gateway handles errors gracefully and returns structured error responses.
+
+**Example Error Handling** (notifications.service.ts:57-64):
+```typescript
+catch (error) {
+  this.logger.error(`Failed to process notification: ${error.message}`, error.stack);
+  return {
+    success: false,
+    error: error.message,
+    message: 'Failed to process notification',
+  };
+}
+```
+
+## Performance Considerations
+
+- **Parallel requests**: User and template data are fetched concurrently
+- **Connection pooling**: RabbitMQ and Redis use connection managers for efficiency
+- **Rate limiting**: Protects downstream services from overload
+- **Persistent connections**: RabbitMQ publisher maintains persistent channel
+
+## Related Services
+
+- [User Service](/services/user-service) - User management and preferences
+- [Template Service](/services/template-service) - Notification template management
+- [Email Service](/services/email-service) - Email delivery processing
+- [Push Service](/services/push-service) - Push notification delivery

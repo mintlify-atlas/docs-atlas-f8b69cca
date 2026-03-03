@@ -1,0 +1,459 @@
+---
+title: Architecture
+description: Deep dive into the microservices architecture, communication patterns, and data flow of the distributed notification system
+---
+
+## Microservices architecture
+
+The Distributed Notification System is built on a microservices architecture with 5 independent services that communicate through REST APIs and message queues. Each service is containerized, independently scalable, and maintains its own data store.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                           Client                                 │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │ HTTP POST
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      API Gateway (8000)                          │
+│  • Validates requests                                            │
+│  • Fetches user data (REST → User Service)                      │
+│  • Fetches templates (REST → Template Service)                  │
+│  • Publishes to RabbitMQ                                         │
+└────────────┬─────────────────────────────┬──────────────────────┘
+             │                             │
+             │                             │
+    ┌────────▼────────┐           ┌────────▼────────┐
+    │  User Service   │           │ Template Service│
+    │     (8001)      │           │     (8002)      │
+    │  • PostgreSQL   │           │  • PostgreSQL   │
+    │  • Redis Cache  │           │  • Versioning   │
+    └─────────────────┘           └─────────────────┘
+             │
+             │ Publishes message
+             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              RabbitMQ (5672) - notifications.direct              │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌───────────────┐ │
+│  │   email.queue    │  │   push.queue     │  │ failed.queue  │ │
+│  └────────┬─────────┘  └────────┬─────────┘  └───────────────┘ │
+└───────────┼──────────────────────┼──────────────────────────────┘
+            │                      │
+            ▼                      ▼
+  ┌─────────────────┐    ┌─────────────────┐
+  │ Email Service   │    │  Push Service   │
+  │    (8003)       │    │     (8004)      │
+  │ • SMTP/API      │    │ • FCM/OneSignal │
+  │ • Retry logic   │    │ • Token validation│
+  └─────────────────┘    └─────────────────┘
+```
+
+## Service responsibilities
+
+### API Gateway (Port 8000)
+
+The API Gateway is the single entry point for all client requests. It orchestrates the notification workflow by coordinating with other services.
+
+**Key responsibilities:**
+- Receives and validates notification requests from clients
+- Authenticates incoming requests
+- Fetches user information from User Service (REST)
+- Retrieves template content from Template Service (REST)
+- Writes initial `pending` status to PostgreSQL shared store
+- Publishes notification messages to appropriate RabbitMQ queues
+- Provides status endpoints for clients to query notification delivery status
+- Logs all requests with correlation IDs for traceability
+
+**API endpoint:**
+```
+POST /api/v1/notifications/
+```
+
+**Request payload:**
+```json
+{
+  "notification_type": "email|push",
+  "user_id": "uuid",
+  "template_code": "string",
+  "variables": {"name": "John", "link": "http://example.com"},
+  "request_id": "unique-string",
+  "priority": 1,
+  "metadata": {"optional": "data"}
+}
+```
+
+**Response format:**
+```json
+{
+  "success": true,
+  "message": "Notification queued successfully",
+  "data": {
+    "notification_id": "uuid",
+    "status": "pending"
+  }
+}
+```
+
+**Error responses:**
+- `400`: Invalid payload
+- `401`: Unauthorized requests
+- `500`: Internal server errors
+
+### User Service (Port 8001)
+
+Manages all user-related data including contact information and notification preferences.
+
+**Key responsibilities:**
+- Store and retrieve user information (name, email, push tokens)
+- Manage notification preferences (email enabled, push enabled)
+- Maintain PostgreSQL database `users_db`
+- Cache user preferences in Redis for fast lookups
+- Expose REST API for user CRUD operations
+
+**API endpoints:**
+```
+POST /api/v1/users/          # Create new user
+GET  /api/v1/users/{user_id} # Retrieve user by ID
+PUT  /api/v1/users/{user_id} # Update user preferences
+```
+
+**User creation payload:**
+```json
+{
+  "name": "str",
+  "email": "email",
+  "push_token": "optional str",
+  "preferences": {
+    "email": true,
+    "push": false
+  },
+  "password": "str"
+}
+```
+
+**User retrieval response:**
+```json
+{
+  "success": true,
+  "data": {
+    "user_id": "uuid",
+    "name": "John Doe",
+    "email": "john@example.com",
+    "push_token": "token123",
+    "preferences": {"email": true, "push": true}
+  },
+  "message": "User retrieved successfully",
+  "meta": {
+    "total": 1,
+    "limit": 10,
+    "page": 1,
+    "total_pages": 1,
+    "has_next": false,
+    "has_previous": false
+  }
+}
+```
+
+### Template Service (Port 8002)
+
+Centralized template management with support for versioning and variable substitution.
+
+**Key responsibilities:**
+- Store notification templates in PostgreSQL
+- Support variable substitution (e.g., `{{name}}`, `{{link}}`)
+- Maintain template version history
+- Support multiple languages/locales
+- Cache frequently accessed templates in Redis
+- Expose REST API for template retrieval
+
+**API endpoint:**
+```
+GET /templates/{template_code}
+```
+
+**Response:**
+```json
+{
+  "template_code": "welcome_email",
+  "subject": "Welcome {{name}}!",
+  "body": "Hello {{name}}, click here: {{link}}",
+  "variables": ["name", "link"],
+  "version": "1.0"
+}
+```
+
+### Email Service (Port 8003)
+
+Background worker that consumes email notification requests from RabbitMQ.
+
+**Key responsibilities:**
+- Consume messages from `email.queue` in RabbitMQ
+- Check user preferences via Redis cache (skip if email disabled)
+- Verify notification status is `pending` in PostgreSQL
+- Send emails via SMTP or API (SendGrid, Mailgun, Gmail)
+- Update notification status to `delivered` or `failed`
+- Implement retry logic with exponential backoff
+- Move permanently failed messages to `failed.queue` (dead letter queue)
+
+**Message format consumed:**
+```json
+{
+  "user_id": "uuid",
+  "template_code": "string",
+  "variables": {"name": "John", "link": "http://example.com"},
+  "request_id": "unique-string"
+}
+```
+
+**SMTP configuration (from docker-compose.yml):**
+- Host: MailHog (for testing) or external SMTP provider
+- Port: 1025 (MailHog) or 587/465 (production)
+- From address: `no-reply@test.com`
+
+### Push Service (Port 8004)
+
+Background worker that consumes push notification requests from RabbitMQ.
+
+**Key responsibilities:**
+- Consume messages from `push.queue` in RabbitMQ
+- Check user preferences via Redis cache (skip if push disabled)
+- Verify notification status is `pending` in PostgreSQL
+- Validate push tokens before sending
+- Send push notifications via FCM, OneSignal, or Web Push
+- Update notification status to `delivered` or `failed`
+- Implement retry logic with exponential backoff
+- Handle invalid device tokens gracefully
+
+## Communication patterns
+
+### Synchronous communication (REST)
+
+Used for real-time data retrieval and queries where immediate response is required.
+
+**Use cases:**
+- API Gateway → User Service: Fetch user data and preferences
+- API Gateway → Template Service: Retrieve template content
+- Client → API Gateway: Query notification status
+
+**Benefits:**
+- Immediate response
+- Simple request/response pattern
+- Easy to debug and monitor
+
+### Asynchronous communication (RabbitMQ)
+
+Used for notification delivery to decouple request acceptance from processing.
+
+**Use cases:**
+- API Gateway → Email/Push Services: Deliver notifications
+- Retry handling for failed deliveries
+- Status updates after notification sent
+
+**Benefits:**
+- High throughput
+- Fault tolerance with retries
+- Scalability (workers can be added/removed)
+- Prevents request timeouts for slow operations
+
+## RabbitMQ queue structure
+
+The system uses a **direct exchange** pattern for routing messages to specific queues.
+
+**Exchange name:** `notifications.direct`
+
+**Queues:**
+
+| Queue Name | Consumer | Purpose |
+|------------|----------|----------|
+| `email.queue` | Email Service | Email notification requests |
+| `push.queue` | Push Service | Push notification requests |
+| `failed.queue` | Dead Letter Queue | Permanently failed messages |
+
+**Routing logic:**
+1. API Gateway publishes message to `notifications.direct` exchange
+2. Message is routed to `email.queue` or `push.queue` based on `notification_type`
+3. Worker services consume messages from their respective queues
+4. Failed messages (after max retries) are moved to `failed.queue`
+
+**Retry mechanism:**
+- Initial retry: 1 second delay
+- Exponential backoff: 1s → 2s → 4s → 8s → 16s
+- Max retries: 5 attempts
+- After max retries: Move to `failed.queue`
+
+<Note>
+RabbitMQ management UI is available at `http://localhost:15673` (default credentials: guest/guest)
+</Note>
+
+## Data storage strategy
+
+Each service maintains its own database following the microservices pattern of data ownership.
+
+### PostgreSQL databases
+
+| Service | Database Name | Schema |
+|---------|---------------|--------|
+| User Service | `users_db` | Users table with preferences |
+| Template Service | `templates_db` | Templates with version history |
+| Shared Store | `notification_db` | Notification status tracking |
+
+**Shared notification status store:**
+```sql
+CREATE TABLE notifications (
+  id UUID PRIMARY KEY,
+  request_id VARCHAR(255) UNIQUE NOT NULL,
+  user_id UUID NOT NULL,
+  notification_type VARCHAR(50),
+  status VARCHAR(50), -- pending, delivered, failed
+  created_at TIMESTAMP,
+  updated_at TIMESTAMP,
+  error_message TEXT
+);
+```
+
+### Redis caching
+
+**Current usage:**
+- User preferences cache (key: `user:preferences:{user_id}`)
+- TTL: 1 hour
+- Updates on user preference changes
+
+**Future optimizations:**
+- Notification status caching for fast reads
+- Rate limiting counters
+- Template caching
+
+## Notification lifecycle flow
+
+<Steps>
+  <Step title="Client submits notification request">
+    Client sends POST request to API Gateway at `/api/v1/notifications/` with notification details (type, user_id, template, variables).
+  </Step>
+  
+  <Step title="API Gateway orchestrates data collection">
+    Gateway makes parallel REST calls to:
+    - User Service: Fetch user email/push token and preferences
+    - Template Service: Retrieve template content and required variables
+  </Step>
+  
+  <Step title="Status written to shared store">
+    Gateway writes notification record with status `pending` to PostgreSQL, using the `request_id` for idempotency.
+  </Step>
+  
+  <Step title="Message published to RabbitMQ">
+    Gateway publishes message to `notifications.direct` exchange, routed to `email.queue` or `push.queue` based on notification type.
+  </Step>
+  
+  <Step title="Worker consumes message">
+    Email or Push Service consumes message from queue and performs validation:
+    - Check user preferences in Redis (skip if disabled)
+    - Verify status is `pending` in PostgreSQL (prevent duplicates)
+  </Step>
+  
+  <Step title="Notification sent">
+    Worker sends notification via:
+    - Email Service: SMTP/API (SendGrid, Mailgun)
+    - Push Service: FCM, OneSignal, Web Push
+  </Step>
+  
+  <Step title="Status updated">
+    Worker updates notification status in PostgreSQL:
+    - Success: Status = `delivered`
+    - Failure: Status = `failed`, error message logged
+    - Retry: Re-queue with exponential backoff
+  </Step>
+</Steps>
+
+## Ports summary
+
+| Service | Port(s) | Description |
+|---------|---------|-------------|
+| API Gateway | 8000 | HTTP server for client requests |
+| User Service | 8001 | HTTP server for user management |
+| Template Service | 8002 | HTTP server for template retrieval |
+| Email Service | 8003 | Internal worker (no external access) |
+| Push Service | 8004 | Internal worker (no external access) |
+| RabbitMQ | 5672, 15672 | AMQP port, Management UI |
+| PostgreSQL | 5432 | Database server |
+| Redis | 6379 | Cache server |
+| MailHog | 1025, 8025 | SMTP server (testing), Web UI |
+
+<Warning>
+Internal ports (8081, 8082, 8080) are used within the Docker network. External access uses the mapped ports shown in the table above.
+</Warning>
+
+## Key design concepts
+
+### Idempotency
+
+Every notification request includes a unique `request_id`. Before processing, workers check the PostgreSQL shared store:
+- If status exists and is not `pending`: Skip (already processed)
+- If status is `pending`: Process normally
+- If no status found: Log error (should have been created by Gateway)
+
+This prevents duplicate notifications even if messages are redelivered by RabbitMQ.
+
+### Circuit breaker
+
+Worker services implement circuit breaker pattern for external dependencies (SMTP, FCM):
+- **Closed**: Normal operation
+- **Open**: Too many failures, stop attempting and fail fast
+- **Half-Open**: Periodically test if service recovered
+
+This prevents cascading failures when external services are down.
+
+### Health checks
+
+All services expose `/health` endpoint:
+
+```json
+GET /health
+{
+  "status": "healthy",
+  "dependencies": {
+    "database": "connected",
+    "redis": "connected",
+    "rabbitmq": "connected"
+  },
+  "timestamp": "2026-03-03T10:00:00Z"
+}
+```
+
+Used by Docker Compose health checks and monitoring tools.
+
+### Correlation IDs
+
+Every request is assigned a correlation ID that flows through all services:
+- Logged at each step (Gateway → User Service → Template Service → Worker)
+- Enables full lifecycle tracking in logs
+- Simplifies debugging across distributed services
+
+## Monitoring and observability
+
+**Metrics to track:**
+- Queue message rates (messages/second)
+- Service response times (p50, p95, p99)
+- Error rates by service
+- Queue lengths (detect backlog)
+- Cache hit/miss ratios
+
+**Logs include:**
+- Correlation IDs for request tracing
+- Timestamps for latency analysis
+- Error messages with stack traces
+- User IDs for debugging specific issues
+
+## Scalability
+
+Each service can scale independently:
+
+- **API Gateway**: Add more containers behind load balancer
+- **User Service**: Read replicas for PostgreSQL, multiple service instances
+- **Template Service**: Heavy caching, read-only replicas
+- **Email/Push Services**: Add more worker containers to consume queue faster
+- **RabbitMQ**: Cluster mode for high availability
+- **Redis**: Sentinel or Cluster mode
+- **PostgreSQL**: Primary-replica setup with connection pooling
+
+<Note>
+Docker Compose is suitable for local development and testing. For production, consider Kubernetes or Docker Swarm for orchestration and auto-scaling.
+</Note>

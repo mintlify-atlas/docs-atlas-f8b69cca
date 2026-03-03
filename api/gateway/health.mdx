@@ -1,0 +1,149 @@
+---
+title: "Health Check"
+description: "Check the health status of the API Gateway"
+---
+
+## Endpoint
+
+<CodeGroup>
+```bash GET
+GET /health
+```
+</CodeGroup>
+
+## Description
+
+Returns the health status of the API Gateway and its dependencies. This endpoint is used for monitoring, load balancers, and orchestration tools to ensure the service is running correctly.
+
+## Authentication
+
+No authentication required.
+
+## Response
+
+The health check validates connectivity to critical dependencies, including RabbitMQ.
+
+<ResponseField name="status" type="string">
+  Overall health status of the service
+  
+  **Values:** `ok`, `error`, `shutting_down`
+</ResponseField>
+
+<ResponseField name="info" type="object">
+  Detailed information about healthy services
+  
+  <Expandable title="properties">
+    <ResponseField name="rabbitmq" type="object">
+      RabbitMQ connection status
+      
+      <Expandable title="properties">
+        <ResponseField name="status" type="string">
+          Status of RabbitMQ connection
+          
+          **Value:** `up`
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="error" type="object">
+  Details about services that failed health checks (only present when status is `error`)
+</ResponseField>
+
+<ResponseField name="details" type="object">
+  Complete details of all health indicators checked
+</ResponseField>
+
+## Example Request
+
+<CodeGroup>
+```bash cURL
+curl http://localhost:8000/health
+```
+
+```javascript JavaScript
+fetch('http://localhost:8000/health')
+  .then(response => response.json())
+  .then(data => console.log(data))
+```
+
+```python Python
+import requests
+
+response = requests.get('http://localhost:8000/health')
+print(response.json())
+```
+</CodeGroup>
+
+## Example Response
+
+```json 200 Healthy
+{
+  "status": "ok",
+  "info": {
+    "rabbitmq": {
+      "status": "up"
+    }
+  },
+  "error": {},
+  "details": {
+    "rabbitmq": {
+      "status": "up"
+    }
+  }
+}
+```
+
+```json 503 Unhealthy
+{
+  "status": "error",
+  "info": {},
+  "error": {
+    "rabbitmq": {
+      "status": "down",
+      "message": "Connection refused"
+    }
+  },
+  "details": {
+    "rabbitmq": {
+      "status": "down",
+      "message": "Connection refused"
+    }
+  }
+}
+```
+
+## Use in Monitoring
+
+This endpoint can be used for:
+
+- **Kubernetes/Docker:** Liveness and readiness probes
+- **Load Balancers:** Health check configuration
+- **Monitoring Tools:** Uptime monitoring (Prometheus, Datadog, etc.)
+- **CI/CD:** Verify service health after deployment
+
+### Kubernetes Example
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 10
+  periodSeconds: 30
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 5
+  periodSeconds: 10
+```
+
+## Notes
+
+- Returns HTTP 200 when all checks pass
+- Returns HTTP 503 when any dependency is unhealthy
+- RabbitMQ connectivity is verified by attempting a ping to the message broker
+- Response time should be monitored - slow responses may indicate degraded performance

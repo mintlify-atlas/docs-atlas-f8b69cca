@@ -1,0 +1,530 @@
+---
+title: Environment Variables
+description: Complete reference of environment variables for all services in the notification system
+---
+
+## Overview
+
+Each service in the distributed notification system uses environment variables for configuration. This page provides a complete reference of all variables, their purposes, and default values.
+
+## Variable Loading Priority
+
+Environment variables are loaded in the following order (highest priority first):
+
+1. **Host environment variables** (set in shell or CI/CD)
+2. **`docker-compose.yml` environment section**
+3. **`.env.example` files** (loaded via `env_file`)
+
+## API Gateway
+
+### Configuration File
+
+Location: `api-gateway/.env.example`
+
+### Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PORT` | No | `8000` | HTTP server port |
+| `RABBITMQ_URL` | Yes | `amqp://localhost:5672` | RabbitMQ connection URL |
+| `REDIS_HOST` | Yes | `localhost` | Redis server hostname |
+| `REDIS_PORT` | No | `6379` | Redis server port |
+| `REDIS_TTL` | No | `300` | Cache TTL in seconds (5 minutes) |
+| `THROTTLE_TTL` | No | `60` | Rate limit window in seconds |
+| `THROTTLE_LIMIT` | No | `10` | Max requests per THROTTLE_TTL window |
+| `USER_SERVICE_URL` | Yes | `http://localhost:8081` | User service base URL |
+| `TEMPLATE_SERVICE_URL` | Yes | `http://localhost:8082` | Template service base URL |
+
+### Docker Compose Overrides
+
+```yaml
+environment:
+  RABBITMQ_URL: amqp://rabbitmq:5672
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  USER_SERVICE_URL: http://user-service:8081
+  TEMPLATE_SERVICE_URL: http://template-service:8082
+  PORT: 8000
+```
+
+### Example Configuration
+
+**Development (.env.example):**
+
+```bash
+# RabbitMQ Configuration
+RABBITMQ_URL=amqp://localhost:5672
+
+# Redis Configuration
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_TTL=300
+
+# Rate Limiting
+THROTTLE_TTL=60
+THROTTLE_LIMIT=10
+
+# Server Configuration
+PORT=8000
+
+# Service URLs
+USER_SERVICE_URL=http://localhost:8081
+TEMPLATE_SERVICE_URL=http://localhost:8082
+```
+
+**Production:**
+
+```bash
+RABBITMQ_URL=amqp://user:password@rabbitmq-prod.example.com:5672
+REDIS_HOST=redis-prod.example.com
+REDIS_PORT=6379
+REDIS_TTL=600
+THROTTLE_TTL=60
+THROTTLE_LIMIT=100
+PORT=8000
+USER_SERVICE_URL=http://user-service:8081
+TEMPLATE_SERVICE_URL=http://template-service:8082
+```
+
+<Warning>
+Never commit production credentials to version control. Use secrets management tools or CI/CD secret injection.
+</Warning>
+
+## User Service
+
+### Configuration File
+
+Location: `user-service/.env.example`
+
+### Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PORT` | No | `8081` | HTTP server port |
+| `DB_HOST` | Yes | `localhost` | PostgreSQL hostname |
+| `DB_PORT` | No | `5432` | PostgreSQL port |
+| `DB_USERNAME` | Yes | `postgres` | Database username |
+| `DB_PASSWORD` | Yes | `your_password_here` | Database password |
+| `DB_DATABASE` | Yes | `notification_system` | Database name |
+| `DB_SSL_ENABLED` | No | `false` | Enable SSL/TLS for database connection |
+| `DB_CA_CERT` | No | `cert-102` | CA certificate identifier for SSL |
+
+### Docker Compose Configuration
+
+```yaml
+env_file:
+  - ./user-service/.env.example
+  - ./user-service/.env  # Optional production overrides
+```
+
+The service uses environment files directly. Database connection can be overridden in the environment section (currently commented out).
+
+### Example Configuration
+
+**Development (.env.example):**
+
+```bash
+# Server Configuration
+PORT=8081
+
+# Database Configuration
+DB_HOST=localhost
+DB_PORT=5432
+DB_USERNAME=postgres
+DB_PASSWORD=your_password_here
+DB_DATABASE=notification_system
+DB_SSL_ENABLED=false
+DB_CA_CERT=cert-102
+```
+
+**Production:**
+
+```bash
+PORT=8081
+DB_HOST=postgres-prod.example.com
+DB_PORT=5432
+DB_USERNAME=notif_user
+DB_PASSWORD=<strong-random-password>
+DB_DATABASE=notification_system
+DB_SSL_ENABLED=true
+DB_CA_CERT=/path/to/ca-certificate.pem
+```
+
+<Warning>
+**Security Critical:** Always change `DB_PASSWORD` from the default value. Use a strong, randomly generated password (minimum 32 characters).
+</Warning>
+
+## Template Service
+
+### Configuration File
+
+Location: Template service uses direct environment configuration in `docker-compose.yml`
+
+### Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PORT` | No | `8002` | HTTP server port (FastAPI) |
+| Database connection variables inherit from PostgreSQL service configuration |
+
+### Docker Compose Configuration
+
+```yaml
+template-service:
+  build:
+    context: ./template-service
+    dockerfile: Dockerfile
+  ports:
+    - "8002:8002"
+  depends_on:
+    - postgres
+```
+
+Template service connects to the same PostgreSQL database as the user service.
+
+### Example Configuration
+
+**Production:**
+
+Add environment section to docker-compose for production:
+
+```yaml
+environment:
+  DATABASE_URL: postgresql://postgres:password@postgres:5432/notification_db
+  PORT: 8002
+```
+
+## Email Service
+
+### Configuration File
+
+Location: `email-service/EmailService/.env.example`
+
+### Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PORT` | No | `8080` | HTTP server port |
+| `RABBITMQ_HOST` | Yes | `rabbitmq` | RabbitMQ hostname |
+| `RABBITMQ_USER` | Yes | `guest` | RabbitMQ username |
+| `RABBITMQ_PASS` | Yes | `guest` | RabbitMQ password |
+| `RABBITMQ_EXCHANGE` | Yes | `notifications.direct` | Exchange name for routing |
+| `RABBITMQ_EMAIL_QUEUE` | Yes | `email.queue` | Queue name for email tasks |
+| `RABBITMQ_FAILED_QUEUE` | Yes | `failed.queue` | Queue name for failed notifications |
+| `REDIS_HOST` | Yes | `redis` | Redis server hostname |
+| `USER_SERVICE_URL` | Yes | `http://user_service:80` | User service base URL |
+| `TEMPLATE_SERVICE_URL` | Yes | `http://template_service:80` | Template service base URL |
+| `SMTP_HOST` | Yes | `mailhog` | SMTP server hostname |
+| `SMTP_PORT` | No | `1025` | SMTP server port |
+| `SMTP_FROM` | Yes | `no-reply@test.com` | Sender email address |
+| `SMPT_USER` | No | (empty) | SMTP authentication username |
+| `SMPT_PASS` | No | (empty) | SMTP authentication password |
+
+### Docker Compose Overrides
+
+```yaml
+environment:
+  RABBITMQ_HOST: rabbitmq
+  RABBITMQ_USER: guest
+  RABBITMQ_PASS: guest
+  RABBITMQ_EXCHANGE: notifications.direct
+  RABBITMQ_EMAIL_QUEUE: email.queue
+  RABBITMQ_FAILED_QUEUE: failed.queue
+  REDIS_HOST: redis
+  USER_SERVICE_URL: http://user-service:8081
+  TEMPLATE_SERVICE_URL: http://template-service:8082
+  SMTP_HOST: mailhog
+  SMTP_PORT: 1025
+  SMTP_FROM: no-reply@test.com
+  PORT: 8080
+```
+
+### Example Configuration
+
+**Development (.env.example):**
+
+```bash
+RABBITMQ_HOST=rabbitmq
+RABBITMQ_USER=guest
+RABBITMQ_PASS=guest
+RABBITMQ_EXCHANGE=notifications.direct
+RABBITMQ_EMAIL_QUEUE=email.queue
+RABBITMQ_FAILED_QUEUE=failed.queue
+
+REDIS_HOST=redis
+
+USER_SERVICE_URL=http://user_service:80
+TEMPLATE_SERVICE_URL=http://template_service:80
+
+SMTP_HOST=mailhog
+SMTP_PORT=1025
+SMTP_FROM=no-reply@test.com
+
+SMPT_USER=
+SMPT_PASS=
+
+PORT=8080
+```
+
+**Production (with SendGrid):**
+
+```bash
+RABBITMQ_HOST=rabbitmq-prod.example.com
+RABBITMQ_USER=email_service_user
+RABBITMQ_PASS=<strong-password>
+RABBITMQ_EXCHANGE=notifications.direct
+RABBITMQ_EMAIL_QUEUE=email.queue
+RABBITMQ_FAILED_QUEUE=failed.queue
+
+REDIS_HOST=redis-prod.example.com
+
+USER_SERVICE_URL=http://user-service:8081
+TEMPLATE_SERVICE_URL=http://template-service:8082
+
+SMTP_HOST=smtp.sendgrid.net
+SMTP_PORT=587
+SMTP_FROM=notifications@yourcompany.com
+SMPT_USER=apikey
+SMPT_PASS=<sendgrid-api-key>
+
+PORT=8080
+```
+
+<Warning>
+**Security Critical:** In production, replace MailHog with a real SMTP provider and use secure credentials. Never use empty SMTP credentials in production.
+</Warning>
+
+## Push Service
+
+### Configuration File
+
+Location: `push-service/.env.example`
+
+### Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PORT` | No | `8004` | HTTP server port |
+| `RABBITMQ_URL` | Yes | `amqp://localhost:5672` | RabbitMQ connection URL |
+| `USER_SERVICE_URL` | Yes | `http://localhost:8081` | User service base URL |
+| `TEMPLATE_SERVICE_URL` | Yes | `http://localhost:8082` | Template service base URL |
+| `MOCK_PUSH_TOKEN` | No | `your_mock_fcm_token_here` | Mock FCM token for testing |
+| `USER_FALLBACK_ON_ERROR` | No | `true` | Fallback if user service unavailable |
+| `TEMPLATE_FALLBACK_ON_ERROR` | No | `true` | Fallback if template service unavailable |
+| `FIREBASE_PROJECT_ID` | Yes* | `your_firebase_project_id` | Firebase project identifier |
+| `FIREBASE_CLIENT_EMAIL` | Yes* | `your_firebase_client_email` | Firebase service account email |
+| `FIREBASE_PRIVATE_KEY` | Yes* | `your_firebase_private_key_here` | Firebase service account private key |
+
+*Required for production push notifications
+
+### Docker Compose Overrides
+
+```yaml
+environment:
+  RABBITMQ_URL: amqp://rabbitmq:5672
+  USER_SERVICE_URL: http://user-service:8081
+  TEMPLATE_SERVICE_URL: http://template-service:8082
+  PORT: 8004
+```
+
+### Example Configuration
+
+**Development (.env.example):**
+
+```bash
+# RabbitMQ Configuration
+RABBITMQ_URL=amqp://localhost:5672
+
+# Service URLs
+USER_SERVICE_URL=http://localhost:8081
+TEMPLATE_SERVICE_URL=http://localhost:8082
+
+# Server Configuration
+PORT=8004
+
+# Mock Configuration (for testing)
+MOCK_PUSH_TOKEN=your_mock_fcm_token_here
+USER_FALLBACK_ON_ERROR=true
+TEMPLATE_FALLBACK_ON_ERROR=true
+
+# Firebase Configuration
+FIREBASE_PROJECT_ID=your_firebase_project_id
+FIREBASE_CLIENT_EMAIL=your_firebase_client_email
+FIREBASE_PRIVATE_KEY=your_firebase_private_key_here
+```
+
+**Production:**
+
+```bash
+RABBITMQ_URL=amqp://push_service:password@rabbitmq-prod.example.com:5672
+USER_SERVICE_URL=http://user-service:8081
+TEMPLATE_SERVICE_URL=http://template-service:8082
+PORT=8004
+
+MOCK_PUSH_TOKEN=
+USER_FALLBACK_ON_ERROR=false
+TEMPLATE_FALLBACK_ON_ERROR=false
+
+FIREBASE_PROJECT_ID=prod-notification-system
+FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xyz@prod-notification-system.iam.gserviceaccount.com
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"
+```
+
+<Warning>
+**Security Critical:** Firebase private keys must be kept secure. Use secret management systems (AWS Secrets Manager, HashiCorp Vault, etc.) in production. Never commit these keys to version control.
+</Warning>
+
+## Infrastructure Services
+
+### RabbitMQ
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `RABBITMQ_DEFAULT_USER` | No | `guest` | Default username |
+| `RABBITMQ_DEFAULT_PASS` | No | `guest` | Default password |
+
+**Docker Compose:**
+
+```yaml
+environment:
+  RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+  RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+```
+
+### PostgreSQL
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `POSTGRES_USER` | No | `postgres` | Database superuser |
+| `POSTGRES_PASSWORD` | Yes | `your_password_here` | Superuser password |
+| `POSTGRES_DB` | No | `notification_db` | Initial database name |
+
+**Docker Compose:**
+
+```yaml
+environment:
+  POSTGRES_USER: ${POSTGRES_USER:-postgres}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-your_password_here}
+  POSTGRES_DB: ${POSTGRES_DB:-notification_db}
+```
+
+<Warning>
+**Security Critical:** Change `POSTGRES_PASSWORD` immediately. Default passwords are a major security vulnerability.
+</Warning>
+
+### Redis
+
+Redis container uses default configuration with no authentication. For production:
+
+```yaml
+command: redis-server --requirepass your-redis-password
+```
+
+Update all services to use:
+```bash
+REDIS_PASSWORD=your-redis-password
+```
+
+## CI/CD Secrets
+
+GitHub Actions workflows reference these secrets:
+
+| Secret | Used By | Purpose |
+|--------|---------|----------|
+| `USER_DB_USER` | CI/CD | Database username for tests |
+| `USER_DB_PASS` | CI/CD | Database password for tests |
+| `USER_DB_NAME` | CI/CD | Test database name |
+| `TEMPLATE_DB_NAME` | CI/CD | Template database name |
+| `RABBITMQ_URL` | CI/CD | RabbitMQ connection for tests |
+| `REDIS_HOST` | CI/CD | Redis hostname for tests |
+| `REDIS_PORT` | CI/CD | Redis port for tests |
+
+Configure these in GitHub repository settings: **Settings → Secrets and variables → Actions**
+
+## Security Best Practices
+
+<Warning>
+**Never commit sensitive values to version control**
+- Use `.env` files (add to `.gitignore`)
+- Use secret management tools in production
+- Rotate credentials regularly
+</Warning>
+
+<Check>
+**Use strong passwords**
+- Minimum 32 characters for database passwords
+- Use cryptographically random generators
+- Different passwords for each service
+</Check>
+
+<Check>
+**Principle of least privilege**
+- Create dedicated database users per service
+- Grant only necessary permissions
+- Use read-only users where applicable
+</Check>
+
+<Check>
+**Enable encryption in transit**
+- Use TLS for database connections (`DB_SSL_ENABLED=true`)
+- Use `amqps://` for RabbitMQ in production
+- Use `rediss://` for Redis with TLS
+</Check>
+
+## Environment Variable Templates
+
+### Development Setup
+
+Create a `.env` file in the project root:
+
+```bash
+# RabbitMQ
+RABBITMQ_USER=guest
+RABBITMQ_PASS=guest
+
+# PostgreSQL
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=dev_password
+POSTGRES_DB=notification_db
+
+# Redis
+REDIS_HOST=redis
+REDIS_PORT=6379
+```
+
+### Production Setup
+
+Use environment-specific files:
+
+```bash
+# .env.production
+RABBITMQ_USER=prod_rabbitmq_user
+RABBITMQ_PASS=<vault:secret/rabbitmq/password>
+
+POSTGRES_USER=prod_db_user
+POSTGRES_PASSWORD=<vault:secret/postgres/password>
+POSTGRES_DB=notification_db
+
+REDIS_HOST=redis-cluster.example.com
+REDIS_PORT=6379
+REDIS_PASSWORD=<vault:secret/redis/password>
+```
+
+## Validation
+
+Verify all environment variables are set correctly:
+
+```bash
+# Check service configuration
+docker compose config
+
+# Verify a specific service
+docker compose config api-gateway
+
+# Check environment variables in running container
+docker compose exec api-gateway env | grep RABBITMQ
+```
+
+<Note>
+Use `docker compose config` to debug environment variable substitution issues. It shows the final configuration after all variable replacements.
+</Note>

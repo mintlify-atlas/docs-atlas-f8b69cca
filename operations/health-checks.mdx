@@ -1,0 +1,406 @@
+---
+title: 'Health Checks'
+description: 'Monitor service health and configure dependency checks'
+---
+
+## Overview
+
+Each service in the distributed notification system exposes a `/health` endpoint for monitoring service availability and dependencies. Health checks are essential for:
+
+- Service orchestration and load balancing
+- Automatic recovery and restarts
+- Deployment verification
+- Dependency monitoring
+
+## Health Check Endpoints
+
+All services expose health checks on the `/health` path:
+
+| Service          | Port | Health Endpoint              |
+| ---------------- | ---- | ---------------------------- |
+| API Gateway      | 8000 | `http://localhost:8000/health` |
+| User Service     | 8001 | `http://localhost:8001/health` |
+| Template Service | 8002 | `http://localhost:8002/health` |
+| Email Service    | 8003 | `http://localhost:8003/health` |
+| Push Service     | 8004 | `http://localhost:8004/health` |
+
+## Service Health Implementations
+
+### API Gateway Health Check
+
+The API Gateway uses NestJS Terminus to check RabbitMQ connectivity:
+
+```typescript api-gateway/src/health/health.controller.ts
+import { Controller, Get } from '@nestjs/common';
+import { HealthCheckService, HealthCheck, MicroserviceHealthIndicator } from '@nestjs/terminus';
+import { Transport } from '@nestjs/microservices';
+
+@Controller('health')
+export class HealthController {
+  constructor(
+    private health: HealthCheckService,
+    private microservice: MicroserviceHealthIndicator,
+  ) {}
+
+  @Get()
+  @HealthCheck()
+  check() {
+    return this.health.check([
+      () => this.microservice.pingCheck('rabbitmq', {
+        transport: Transport.RMQ,
+        options: {
+          urls: [process.env.RABBITMQ_URL || 'amqp://guest:guest@localhost:5672'],
+        },
+      }),
+    ]);
+  }
+}
+```
+
+**Health Module:**
+
+```typescript api-gateway/src/health/health.module.ts
+import { Module } from '@nestjs/common';
+import { TerminusModule } from '@nestjs/terminus';
+import { HealthController } from './health.controller';
+
+@Module({
+  imports: [TerminusModule],
+  controllers: [HealthController]
+})
+export class HealthModule {}
+```
+
+**Response (Healthy):**
+
+```json
+{
+  "status": "ok",
+  "info": {
+    "rabbitmq": {
+      "status": "up"
+    }
+  },
+  "error": {},
+  "details": {
+    "rabbitmq": {
+      "status": "up"
+    }
+  }
+}
+```
+
+**Response (Unhealthy):**
+
+```json
+{
+  "status": "error",
+  "info": {},
+  "error": {
+    "rabbitmq": {
+      "status": "down",
+      "message": "Connection refused"
+    }
+  },
+  "details": {
+    "rabbitmq": {
+      "status": "down",
+      "message": "Connection refused"
+    }
+  }
+}
+```
+
+### Push Service Health Check
+
+The Push Service checks connectivity to its dependencies:
+
+```typescript push-service/src/health/health.controller.ts
+import { Controller, Get } from '@nestjs/common';
+import { HealthCheckService, HealthCheck, HttpHealthIndicator } from '@nestjs/terminus';
+
+@Controller('health')
+export class HealthController {
+  constructor(
+    private health: HealthCheckService,
+    private http: HttpHealthIndicator,
+  ) {}
+
+  @Get()
+  @HealthCheck()
+  async checkHealth() {
+    return this.health.check([
+      async () => this.http.pingCheck('api-gateway', process.env.API_GATEWAY_URL || 'http://localhost:3000'),
+      async () => this.http.pingCheck('user-service', process.env.USER_SERVICE_URL || 'http://localhost:8081'),
+      async () => this.http.pingCheck('template-service', process.env.TEMPLATE_SERVICE_URL || 'http://localhost:8082'),
+    ]);
+  }
+}
+```
+
+<Note>
+  The Push Service validates that all upstream dependencies are reachable before marking itself as healthy.
+</Note>
+
+### Email Service Health Check
+
+The Email Service uses a lightweight HTTP listener for health checks:
+
+```csharp email-service/EmailService/Program.cs
+using System.Net;
+using System.Text;
+
+// Simple Health Endpoint (No ASP.NET Core Required)
+_ = Task.Run(async () =>
+{
+    var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
+    var listener = new HttpListener();
+    listener.Prefixes.Add($"http://+:{port}/health/");
+    listener.Start();
+
+    Log.Information($"Health endpoint listening on http://+:{port}/health");
+
+    while (true)
+    {
+        var context = await listener.GetContextAsync();
+        var response = context.Response;
+        var buffer = Encoding.UTF8.GetBytes("{\"status\":\"healthy\"}");
+        response.ContentType = "application/json";
+        response.ContentLength64 = buffer.Length;
+        await response.OutputStream.WriteAsync(buffer);
+        response.Close();
+    }
+});
+```
+
+**Response:**
+
+```json
+{
+  "status": "healthy"
+}
+```
+
+<Tip>
+  The Email Service uses a background task to expose a health endpoint without running a full ASP.NET Core web server.
+</Tip>
+
+## Docker Health Check Configuration
+
+### RabbitMQ Health Check
+
+```yaml docker-compose.yml
+rabbitmq:
+  image: rabbitmq:3.11-management
+  healthcheck:
+    test: ["CMD", "rabbitmq-diagnostics", "ping"]
+    interval: 5s
+    timeout: 10s
+    retries: 5
+    start_period: 10s
+```
+
+**Parameters:**
+
+- `test`: Command to check if RabbitMQ is responsive
+- `interval`: Check every 5 seconds
+- `timeout`: Fail if check takes longer than 10 seconds
+- `retries`: Mark unhealthy after 5 consecutive failures
+- `start_period`: Grace period before starting health checks
+
+### Service Dependency Management
+
+Services use Docker Compose `depends_on` with health conditions:
+
+```yaml docker-compose.yml
+email-service:
+  depends_on:
+    rabbitmq:
+      condition: service_healthy
+    redis:
+      condition: service_started
+    mailhog:
+      condition: service_started
+```
+
+<Warning>
+  The Email Service won't start until RabbitMQ passes its health check, preventing startup errors.
+</Warning>
+
+## Service Dependency Checks
+
+### Dependency Graph
+
+```
+API Gateway
+├── RabbitMQ (required)
+├── User Service (required)
+└── Template Service (required)
+
+Email Service
+├── RabbitMQ (required)
+├── Redis (required)
+├── User Service (optional)
+└── Template Service (optional)
+
+Push Service
+├── RabbitMQ (required)
+├── User Service (required)
+└── Template Service (required)
+
+User Service
+├── PostgreSQL (required)
+└── Redis (required)
+
+Template Service
+└── PostgreSQL (required)
+```
+
+### Checking Dependencies Manually
+
+**Check RabbitMQ:**
+
+```bash
+curl http://localhost:15673/api/healthchecks/node
+```
+
+**Check Redis:**
+
+```bash
+redis-cli -h localhost -p 6379 ping
+# Expected: PONG
+```
+
+**Check PostgreSQL:**
+
+```bash
+psql -h localhost -p 5432 -U postgres -c "SELECT 1;"
+```
+
+## Using Health Endpoints for Orchestration
+
+### Kubernetes Liveness and Readiness Probes
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: api-gateway
+spec:
+  containers:
+  - name: api-gateway
+    image: api-gateway:latest
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 30
+      periodSeconds: 10
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 5
+      periodSeconds: 5
+```
+
+**Liveness Probe:** Restarts the container if the service is unresponsive
+
+**Readiness Probe:** Removes the pod from load balancing if not ready
+
+### Load Balancer Health Checks
+
+Configure your load balancer to use health endpoints:
+
+**AWS Application Load Balancer:**
+
+- Health check path: `/health`
+- Health check interval: 30 seconds
+- Healthy threshold: 2 consecutive successes
+- Unhealthy threshold: 2 consecutive failures
+- Timeout: 5 seconds
+
+### CI/CD Deployment Verification
+
+Verify service health after deployment:
+
+```bash
+#!/bin/bash
+
+SERVICES=("8000" "8001" "8002" "8003" "8004")
+
+for port in "${SERVICES[@]}"; do
+  echo "Checking service on port $port..."
+  
+  response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$port/health)
+  
+  if [ "$response" = "200" ]; then
+    echo "✓ Port $port: Healthy"
+  else
+    echo "✗ Port $port: Unhealthy (HTTP $response)"
+    exit 1
+  fi
+done
+
+echo "All services healthy!"
+```
+
+## Health Check Best Practices
+
+1. **Keep Checks Lightweight**: Health checks should complete quickly (< 1 second)
+2. **Check Critical Dependencies**: Only verify essential services, not all dependencies
+3. **Use Appropriate Timeouts**: Allow enough time for transient network issues
+4. **Implement Graceful Degradation**: Return partial availability status when possible
+5. **Log Health Check Failures**: Track why services are marked unhealthy
+6. **Avoid External Calls**: Don't rely on third-party APIs in health checks
+7. **Version Your Endpoints**: Include service version in health responses for debugging
+
+## Advanced Health Check Patterns
+
+### Detailed Health Response
+
+```json
+{
+  "status": "ok",
+  "version": "1.0.0",
+  "uptime": 3600,
+  "timestamp": "2026-03-03T12:34:56Z",
+  "checks": {
+    "database": {
+      "status": "up",
+      "response_time_ms": 5
+    },
+    "rabbitmq": {
+      "status": "up",
+      "queue_depth": 42
+    },
+    "redis": {
+      "status": "up",
+      "memory_mb": 128
+    }
+  }
+}
+```
+
+### Startup Probes for Slow-Starting Services
+
+```yaml
+startupProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 0
+  periodSeconds: 10
+  failureThreshold: 30  # Allow up to 5 minutes to start
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Monitoring" icon="chart-line" href="/operations/monitoring">
+    Set up monitoring and observability for the system
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Diagnose and resolve common system issues
+  </Card>
+</CardGroup>

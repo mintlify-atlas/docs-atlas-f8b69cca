@@ -1,0 +1,225 @@
+---
+title: "Get User"
+description: "Retrieve user information by user ID"
+---
+
+## Endpoint
+
+<CodeGroup>
+```bash GET
+GET /api/v1/users/{user_id}
+```
+</CodeGroup>
+
+## Description
+
+Retrieves detailed information about a specific user, including their notification preferences, contact details, and push notification token.
+
+## Authentication
+
+This endpoint requires authentication. Include valid credentials in your request headers.
+
+## Path Parameters
+
+<ParamField path="user_id" type="string (UUID)" required>
+  The unique identifier of the user to retrieve.
+  
+  **Example:** `123e4567-e89b-12d3-a456-426614174000`
+  
+  **Validation:** Must be a valid UUID format
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the request was successful
+  
+  **Value:** `true`
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  User data object
+  
+  <Expandable title="properties">
+    <ResponseField name="user_id" type="string (UUID)">
+      Unique identifier for the user
+      
+      **Example:** `123e4567-e89b-12d3-a456-426614174000`
+    </ResponseField>
+    
+    <ResponseField name="name" type="string">
+      Full name of the user
+      
+      **Example:** `John Doe`
+    </ResponseField>
+    
+    <ResponseField name="email" type="string">
+      Email address of the user
+      
+      **Example:** `john@example.com`
+    </ResponseField>
+    
+    <ResponseField name="push_token" type="string | null">
+      Firebase Cloud Messaging (FCM) token for push notifications
+      
+      **Example:** `fcm_token_string_example`
+      
+      **Note:** `null` if user has not registered for push notifications
+    </ResponseField>
+    
+    <ResponseField name="preferences" type="object">
+      User notification preferences
+      
+      <Expandable title="properties">
+        <ResponseField name="email" type="boolean">
+          Whether the user has enabled email notifications
+          
+          **Example:** `true`
+        </ResponseField>
+        
+        <ResponseField name="push" type="boolean">
+          Whether the user has enabled push notifications
+          
+          **Example:** `true`
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Human-readable message describing the result
+  
+  **Example:** `User retrieved successfully`
+</ResponseField>
+
+<ResponseField name="meta" type="object">
+  Pagination and metadata information
+  
+  <Expandable title="properties">
+    <ResponseField name="total" type="number">
+      Total number of records
+    </ResponseField>
+    
+    <ResponseField name="limit" type="number">
+      Number of records per page
+    </ResponseField>
+    
+    <ResponseField name="page" type="number">
+      Current page number
+    </ResponseField>
+    
+    <ResponseField name="total_pages" type="number">
+      Total number of pages
+    </ResponseField>
+    
+    <ResponseField name="has_next" type="boolean">
+      Whether there is a next page
+    </ResponseField>
+    
+    <ResponseField name="has_previous" type="boolean">
+      Whether there is a previous page
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Error Responses
+
+<ResponseField name="404 Not Found" type="error">
+  Returned when the user with the specified ID does not exist.
+  
+  ```json
+  {
+    "success": false,
+    "message": "User not found",
+    "error": "No user exists with ID: 123e4567-e89b-12d3-a456-426614174000"
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="401 Unauthorized" type="error">
+  Returned when authentication credentials are missing or invalid.
+  
+  ```json
+  {
+    "success": false,
+    "message": "Unauthorized",
+    "error": "Invalid or missing authentication token"
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="400 Bad Request" type="error">
+  Returned when the user_id parameter is not a valid UUID.
+  
+  ```json
+  {
+    "success": false,
+    "message": "Invalid user ID format",
+    "error": "user_id must be a valid UUID"
+  }
+  ```
+</ResponseField>
+
+## Example Request
+
+<CodeGroup>
+```bash cURL
+curl http://localhost:8001/api/v1/users/123e4567-e89b-12d3-a456-426614174000 \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```javascript JavaScript
+fetch('http://localhost:8001/api/v1/users/123e4567-e89b-12d3-a456-426614174000', {
+  headers: {
+    'Authorization': 'Bearer YOUR_TOKEN'
+  }
+})
+  .then(response => response.json())
+  .then(data => console.log(data))
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    'http://localhost:8001/api/v1/users/123e4567-e89b-12d3-a456-426614174000',
+    headers={'Authorization': 'Bearer YOUR_TOKEN'}
+)
+print(response.json())
+```
+</CodeGroup>
+
+## Example Response
+
+```json 200 Success
+{
+  "success": true,
+  "data": {
+    "user_id": "123e4567-e89b-12d3-a456-426614174000",
+    "name": "John Doe",
+    "email": "john@example.com",
+    "push_token": "fcm_token_abc123xyz789",
+    "preferences": {
+      "email": true,
+      "push": true
+    }
+  },
+  "message": "User retrieved successfully",
+  "meta": {
+    "total": 1,
+    "limit": 10,
+    "page": 1,
+    "total_pages": 1,
+    "has_next": false,
+    "has_previous": false
+  }
+}
+```
+
+## Notes
+
+- User preferences are cached in Redis for faster lookups
+- The `push_token` field is used by the Push Service to send notifications
+- User data is validated against the PostgreSQL database (`users_db`)
+- This endpoint is frequently called by the API Gateway when processing notification requests

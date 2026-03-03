@@ -1,0 +1,440 @@
+---
+title: User Service
+description: User management and preferences service with PostgreSQL and Redis caching
+---
+
+## Overview
+
+The User Service manages user data and notification preferences for the distributed notification system. Built with NestJS, TypeORM, and PostgreSQL, it provides CRUD operations for user management with Redis caching for improved performance.
+
+## Purpose and Responsibilities
+
+- **User management** - Create, read, update, and delete user records
+- **Preference management** - Store and update user notification preferences (email, push)
+- **Data persistence** - PostgreSQL database with TypeORM ORM
+- **Performance optimization** - Redis caching layer (planned/optional)
+- **API documentation** - Swagger/OpenAPI documentation
+
+## Tech Stack
+
+- **Framework**: NestJS 11.x
+- **Language**: TypeScript 5.x
+- **ORM**: TypeORM 0.3.x
+- **Database**: PostgreSQL 14+
+- **Validation**: class-validator, class-transformer
+- **API Documentation**: Swagger/OpenAPI
+
+## Configuration
+
+**Port**: 8001 (default 3002)
+
+**Environment Variables**:
+```bash
+PORT=3002
+DB_HOST=localhost
+DB_PORT=5432
+DB_USERNAME=postgres
+DB_PASSWORD=postgres
+DB_DATABASE=notification_users
+DB_SSL_ENABLED=false
+DB_CA_CERT=           # SSL certificate for production
+```
+
+## Data Model
+
+The User Service uses a single `users` table with the following schema.
+
+### User Entity
+
+**Implementation** (user/user.entity.ts:9-31):
+```typescript
+@Entity('users')
+export class User {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column()
+  name: string;
+
+  @Column({ unique: true })
+  email: string;
+
+  @Column({ name: 'push_token', type: 'varchar', nullable: true })
+  push_token: string;
+
+  @Column({ type: 'jsonb', nullable: true })
+  preferences: any;
+
+  @CreateDateColumn({ name: 'created_at' })
+  created_at: Date;
+
+  @UpdateDateColumn({ name: 'updated_at' })
+  updated_at: Date;
+}
+```
+
+**Database Schema**:
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | UUID | PRIMARY KEY | Auto-generated user ID |
+| `name` | VARCHAR | NOT NULL | User's full name |
+| `email` | VARCHAR | UNIQUE, NOT NULL | User's email address |
+| `push_token` | VARCHAR | NULLABLE | FCM token for push notifications |
+| `preferences` | JSONB | NULLABLE | User notification preferences |
+| `created_at` | TIMESTAMP | NOT NULL | Record creation timestamp |
+| `updated_at` | TIMESTAMP | NOT NULL | Record update timestamp |
+
+**Preferences Structure**:
+```json
+{
+  "email": true,
+  "push": false,
+  "sms": false
+}
+```
+
+<Info>
+The `preferences` column uses PostgreSQL's JSONB type for flexible, queryable JSON storage.
+</Info>
+
+## API Endpoints
+
+### POST /api/v1/users
+
+Create a new user.
+
+**Request Body**:
+```json
+{
+  "name": "John Doe",
+  "email": "john.doe@example.com",
+  "push_token": "fcm-token-here",
+  "preferences": {
+    "email": true,
+    "push": true
+  }
+}
+```
+
+**Response** (201 Created):
+```json
+{
+  "id": "123e4567-e89b-12d3-a456-426614174000",
+  "name": "John Doe",
+  "email": "john.doe@example.com",
+  "push_token": "fcm-token-here",
+  "preferences": {
+    "email": true,
+    "push": true
+  },
+  "created_at": "2024-03-15T10:30:00.000Z",
+  "updated_at": "2024-03-15T10:30:00.000Z"
+}
+```
+
+### GET /api/v1/users
+
+Retrieve all users.
+
+**Response** (200 OK):
+```json
+[
+  {
+    "id": "123e4567-e89b-12d3-a456-426614174000",
+    "name": "John Doe",
+    "email": "john.doe@example.com",
+    "push_token": "fcm-token-here",
+    "preferences": { "email": true, "push": true },
+    "created_at": "2024-03-15T10:30:00.000Z",
+    "updated_at": "2024-03-15T10:30:00.000Z"
+  }
+]
+```
+
+### GET /api/v1/users/:id
+
+Retrieve a specific user by ID.
+
+**Response** (200 OK):
+```json
+{
+  "id": "123e4567-e89b-12d3-a456-426614174000",
+  "name": "John Doe",
+  "email": "john.doe@example.com",
+  "push_token": "fcm-token-here",
+  "preferences": { "email": true, "push": true },
+  "created_at": "2024-03-15T10:30:00.000Z",
+  "updated_at": "2024-03-15T10:30:00.000Z"
+}
+```
+
+**Error Response** (404 Not Found):
+```json
+{
+  "statusCode": 404,
+  "message": "User with ID xyz not found",
+  "error": "Not Found"
+}
+```
+
+### PUT /api/v1/users/:id
+
+Update user details.
+
+**Request Body**:
+```json
+{
+  "name": "Jane Doe",
+  "email": "jane.doe@example.com"
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "id": "123e4567-e89b-12d3-a456-426614174000",
+  "name": "Jane Doe",
+  "email": "jane.doe@example.com",
+  "push_token": "fcm-token-here",
+  "preferences": { "email": true, "push": true },
+  "created_at": "2024-03-15T10:30:00.000Z",
+  "updated_at": "2024-03-15T11:00:00.000Z"
+}
+```
+
+### PUT /api/v1/users/:id/preferences
+
+Update user notification preferences.
+
+**Request Body**:
+```json
+{
+  "preferences": {
+    "email": false,
+    "push": true
+  }
+}
+```
+
+**Implementation** (user/user.service.ts:37-41):
+```typescript
+async updatePreferences(id: string, updatePreferencesDto: UpdateUserPreferencesDto): Promise<User> {
+  const user = await this.findOne(id);
+  user.preferences = { ...user.preferences, ...updatePreferencesDto.preferences };
+  return this.userRepository.save(user);
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "id": "123e4567-e89b-12d3-a456-426614174000",
+  "name": "John Doe",
+  "email": "john.doe@example.com",
+  "push_token": "fcm-token-here",
+  "preferences": { "email": false, "push": true },
+  "created_at": "2024-03-15T10:30:00.000Z",
+  "updated_at": "2024-03-15T11:15:00.000Z"
+}
+```
+
+<Note>
+Preferences are merged with existing values, so you only need to send the fields you want to update.
+</Note>
+
+### DELETE /api/v1/users/:id
+
+Delete a user.
+
+**Response** (204 No Content)
+
+**Error Response** (404 Not Found):
+```json
+{
+  "statusCode": 404,
+  "message": "User with ID xyz not found",
+  "error": "Not Found"
+}
+```
+
+### GET /health
+
+Health check endpoint.
+
+**Response** (200 OK):
+```json
+{
+  "status": "ok"
+}
+```
+
+## Service Implementation
+
+The User Service uses TypeORM's Repository pattern for database operations.
+
+**Core Methods** (user/user.service.ts:8-49):
+```typescript
+@Injectable()
+export class UserService {
+  constructor(
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
+  ) {}
+
+  async create(createUserDto: CreateUserDto): Promise<User> {
+    const user = this.userRepository.create(createUserDto);
+    return this.userRepository.save(user);
+  }
+
+  async findAll(): Promise<User[]> {
+    return this.userRepository.find();
+  }
+
+  async findOne(id: string): Promise<User> {
+    const user = await this.userRepository.findOne({ where: { id } });
+    if (!user) {
+      throw new NotFoundException(`User with ID ${id} not found`);
+    }
+    return user;
+  }
+
+  async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
+    const user = await this.findOne(id);
+    this.userRepository.merge(user, updateUserDto);
+    return this.userRepository.save(user);
+  }
+
+  async remove(id: string): Promise<void> {
+    const result = await this.userRepository.delete(id);
+    if (result.affected === 0) {
+      throw new NotFoundException(`User with ID ${id} not found`);
+    }
+  }
+}
+```
+
+## Database Configuration
+
+TypeORM is configured to connect to PostgreSQL with SSL support for production.
+
+**Configuration** (app.module.ts:15-32):
+```typescript
+TypeOrmModule.forRootAsync({
+  imports: [ConfigModule],
+  useFactory: (configService: ConfigService) => ({
+    type: 'postgres',
+    host: configService.get<string>('DB_HOST'),
+    port: configService.get<number>('DB_PORT'),
+    username: configService.get<string>('DB_USERNAME'),
+    password: configService.get<string>('DB_PASSWORD'),
+    database: configService.get<string>('DB_DATABASE'),
+    entities: [User],
+    synchronize: true, // Should be false in production
+    ssl: configService.get<string>('DB_SSL_ENABLED') === 'true' ? {
+      rejectUnauthorized: true,
+      ca: configService.get<string>('DB_CA_CERT'),
+    } : false,
+  }),
+  inject: [ConfigService],
+})
+```
+
+<Warning>
+Set `synchronize: false` in production and use migrations to manage schema changes.
+</Warning>
+
+## Redis Caching Strategy
+
+While not fully implemented in the current codebase, the User Service is designed to support Redis caching for frequently accessed user data.
+
+**Caching Strategy** (recommended):
+- Cache user records by ID with 5-minute TTL
+- Cache user preferences separately with 10-minute TTL
+- Invalidate cache on updates
+- Use cache-aside pattern
+
+**Example Implementation**:
+```typescript
+async findOne(id: string): Promise<User> {
+  // Try cache first
+  const cached = await this.redis.get(`user:${id}`);
+  if (cached) return JSON.parse(cached);
+
+  // Fetch from database
+  const user = await this.userRepository.findOne({ where: { id } });
+  if (!user) {
+    throw new NotFoundException(`User with ID ${id} not found`);
+  }
+
+  // Store in cache
+  await this.redis.setex(`user:${id}`, 300, JSON.stringify(user));
+  return user;
+}
+```
+
+<Info>
+The API Gateway includes Redis caching for user preferences (see RedisCacheService).
+</Info>
+
+## Running the Service
+
+### Development
+```bash
+npm run start:dev
+```
+
+### Production
+```bash
+npm run build
+npm run start:prod
+```
+
+### Docker
+```bash
+docker build -t user-service .
+docker run -p 8001:3002 \
+  -e DB_HOST=postgres \
+  -e DB_PORT=5432 \
+  -e DB_USERNAME=postgres \
+  -e DB_PASSWORD=postgres \
+  -e DB_DATABASE=notification_users \
+  user-service
+```
+
+## Validation
+
+All requests are validated using DTOs with class-validator decorators.
+
+**Global Validation Pipe** (user/user.controller.ts:23):
+```typescript
+@Controller('api/v1/users')
+@UsePipes(new ValidationPipe({ transform: true }))
+export class UserController {
+  // ...
+}
+```
+
+## Error Handling
+
+The service uses NestJS built-in exception filters for structured error responses.
+
+**Not Found Example** (user/user.service.ts:24-27):
+```typescript
+const user = await this.userRepository.findOne({ where: { id } });
+if (!user) {
+  throw new NotFoundException(`User with ID ${id} not found`);
+}
+```
+
+## Performance Considerations
+
+- **Database indexes**: Unique index on `email`, primary key on `id`
+- **Connection pooling**: TypeORM manages connection pool automatically
+- **JSONB queries**: PostgreSQL JSONB supports efficient queries on preferences
+- **Caching**: Add Redis for frequently accessed user data
+
+## Related Services
+
+- [API Gateway](/services/api-gateway) - Calls User Service to fetch user data
+- [Email Service](/services/email-service) - Uses user data for email delivery
+- [Push Service](/services/push-service) - Uses push_token for notification delivery

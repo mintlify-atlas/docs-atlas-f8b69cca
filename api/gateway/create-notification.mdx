@@ -1,0 +1,264 @@
+---
+title: "Create Notification"
+description: "Queue a notification for delivery via email or push"
+---
+
+## Endpoint
+
+<CodeGroup>
+```bash POST
+POST /api/v1/notifications
+```
+</CodeGroup>
+
+## Description
+
+Submits a notification request to the API Gateway. The gateway validates the request, queues it in RabbitMQ, and returns a confirmation with a notification ID for tracking.
+
+## Authentication
+
+This endpoint requires authentication. Include valid credentials in your request headers.
+
+## Request Body
+
+<ParamField path="notification_type" type="enum" required>
+  Type of notification to send. 
+  
+  **Allowed values:** `email`, `push`
+</ParamField>
+
+<ParamField path="user_id" type="string (UUID)" required>
+  User ID in UUID format.
+  
+  **Example:** `123e4567-e89b-12d3-a456-426614174000`
+  
+  **Validation:** Must be a valid UUID v4 format
+</ParamField>
+
+<ParamField path="template_code" type="string" required>
+  Template code to use for the notification. The template must exist in the Template Service.
+  
+  **Example:** `welcome_email`, `password_reset`
+</ParamField>
+
+<ParamField path="variables" type="object" required>
+  Variables to populate in the template. Structure depends on the template being used.
+  
+  <Expandable title="properties">
+    <ParamField path="name" type="string" required>
+      User name for template substitution
+      
+      **Example:** `John Doe`
+    </ParamField>
+    
+    <ParamField path="link" type="string" required>
+      Link URL for the notification
+      
+      **Example:** `https://example.com`
+    </ParamField>
+    
+    <ParamField path="meta" type="object">
+      Additional metadata for the notification
+      
+      **Example:** `{"custom_field": "custom_value"}`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="request_id" type="string" required>
+  Unique request ID for idempotency. Use this to prevent duplicate notifications.
+  
+  **Example:** `req-123e4567-e89b-12d3-a456-426614174000`
+</ParamField>
+
+<ParamField path="priority" type="number">
+  Priority level for the notification. Higher numbers indicate higher priority.
+  
+  **Range:** 1-5
+  
+  **Default:** 1
+  
+  **Example:** `1`
+</ParamField>
+
+<ParamField path="metadata" type="object">
+  Additional metadata for the notification request. Can contain any JSON-serializable data.
+  
+  **Example:** `{"title": "Welcome!"}`
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the request was successful
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Response data object
+  
+  <Expandable title="properties">
+    <ResponseField name="notification_id" type="string">
+      Unique identifier for the queued notification
+      
+      **Example:** `req-123e4567-e89b-12d3-a456-426614174000`
+    </ResponseField>
+    
+    <ResponseField name="status" type="string">
+      Current status of the notification
+      
+      **Value:** `queued`
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Human-readable message describing the result
+  
+  **Example:** `Notification queued successfully`
+</ResponseField>
+
+## Error Responses
+
+<ResponseField name="400 Bad Request" type="error">
+  Returned when the request payload is invalid or missing required fields.
+  
+  **Example scenarios:**
+  - Invalid UUID format for `user_id`
+  - Missing required fields
+  - Invalid `notification_type` value
+  - Priority outside 1-5 range
+</ResponseField>
+
+<ResponseField name="401 Unauthorized" type="error">
+  Returned when authentication credentials are missing or invalid.
+</ResponseField>
+
+<ResponseField name="500 Internal Server Error" type="error">
+  Returned when an unexpected error occurs on the server.
+  
+  **Example scenarios:**
+  - RabbitMQ connection failure
+  - Database connectivity issues
+</ResponseField>
+
+## Example Request
+
+<CodeGroup>
+```bash cURL
+curl -X POST http://localhost:8000/api/v1/notifications \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "notification_type": "email",
+    "user_id": "123e4567-e89b-12d3-a456-426614174000",
+    "template_code": "welcome_email",
+    "variables": {
+      "name": "John Doe",
+      "link": "https://example.com/welcome",
+      "meta": {
+        "campaign": "onboarding"
+      }
+    },
+    "request_id": "req-123e4567-e89b-12d3-a456-426614174000",
+    "priority": 1,
+    "metadata": {
+      "title": "Welcome to Our Platform"
+    }
+  }'
+```
+
+```javascript JavaScript
+fetch('http://localhost:8000/api/v1/notifications', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer YOUR_TOKEN'
+  },
+  body: JSON.stringify({
+    notification_type: 'email',
+    user_id: '123e4567-e89b-12d3-a456-426614174000',
+    template_code: 'welcome_email',
+    variables: {
+      name: 'John Doe',
+      link: 'https://example.com/welcome',
+      meta: {
+        campaign: 'onboarding'
+      }
+    },
+    request_id: 'req-123e4567-e89b-12d3-a456-426614174000',
+    priority: 1,
+    metadata: {
+      title: 'Welcome to Our Platform'
+    }
+  })
+})
+```
+
+```python Python
+import requests
+
+response = requests.post(
+    'http://localhost:8000/api/v1/notifications',
+    headers={
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer YOUR_TOKEN'
+    },
+    json={
+        'notification_type': 'email',
+        'user_id': '123e4567-e89b-12d3-a456-426614174000',
+        'template_code': 'welcome_email',
+        'variables': {
+            'name': 'John Doe',
+            'link': 'https://example.com/welcome',
+            'meta': {
+                'campaign': 'onboarding'
+            }
+        },
+        'request_id': 'req-123e4567-e89b-12d3-a456-426614174000',
+        'priority': 1,
+        'metadata': {
+            'title': 'Welcome to Our Platform'
+        }
+    }
+)
+```
+</CodeGroup>
+
+## Example Response
+
+```json 200 Success
+{
+  "success": true,
+  "data": {
+    "notification_id": "req-123e4567-e89b-12d3-a456-426614174000",
+    "status": "queued"
+  },
+  "message": "Notification queued successfully"
+}
+```
+
+```json 400 Bad Request
+{
+  "success": false,
+  "message": "Validation failed",
+  "error": [
+    "user_id must be a valid UUID",
+    "priority must not be greater than 5"
+  ]
+}
+```
+
+```json 401 Unauthorized
+{
+  "success": false,
+  "message": "Unauthorized",
+  "error": "Invalid or missing authentication token"
+}
+```
+
+## Notes
+
+- The `request_id` field enables **idempotency** - sending the same `request_id` multiple times will not create duplicate notifications
+- Notifications are queued asynchronously in RabbitMQ (`email.queue` or `push.queue` based on `notification_type`)
+- The gateway validates user existence and template availability before queuing
+- Status updates can be tracked using the returned `notification_id`
